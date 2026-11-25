@@ -715,6 +715,18 @@ export function usePermanentP2P() {
     [attachMediaCall, connectToPartner, initLocalStream, setupDataConnection]
   );
 
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'push-received') {
+        const w = window as unknown as { __pushReceived?: number };
+        w.__pushReceived = (w.__pushReceived || 0) + 1;
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMsg);
+    return () => navigator.serviceWorker.removeEventListener('message', onMsg);
+  }, []);
+
   // Registers this device for push and makes sure the SERVER stored it. Returns why it failed, if it did.
   const subscribePush = useCallback(async (): Promise<'ok' | 'unsupported' | 'no-key' | 'failed'> => {
     try {
@@ -815,13 +827,33 @@ export function usePermanentP2P() {
     const sub = await subscribePush();
     if (sub === 'no-key') return setNotice('The server has no push keys yet (VAPID keys missing on Render).');
     if (sub !== 'ok') return setNotice('This device could not be registered for notifications. Close and reopen the app, then try again.');
+    // The service worker tells the page when the push really arrived on this device.
+    const arrived = new Promise<boolean>((resolve) => {
+      const onMsg = (e: MessageEvent) => {
+        if (e.data && e.data.type === 'push-received') {
+          navigator.serviceWorker.removeEventListener('message', onMsg);
+          resolve(true);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', onMsg);
+      setTimeout(() => {
+        navigator.serviceWorker.removeEventListener('message', onMsg);
+        resolve(false);
+      }, 15000);
+    });
     const res: any = await new Promise((resolve) =>
       getSocket().timeout(10000).emit('push-test', {}, (err: any, r: any) => resolve(err ? { ok: false, reason: 'timeout' } : r))
     );
     if (!res || !res.ok) {
       setNotice(res?.reason === 'server-off' ? 'Push is switched off on the server (VAPID keys missing).' : 'Could not reach the server. Try again.');
     } else if (res.sent > 0) {
-      setNotice(`Test sent to ${res.sent} device${res.sent > 1 ? 's' : ''}. If nothing shows up, check the phone's notification settings for Chrome / E-Browser (and Do Not Disturb).`);
+      setNotice('Sent. Waiting for it to arrive on this device…');
+      const got = await arrived;
+      setNotice(
+        got
+          ? 'It reached this device. If you do not see it, open the phone\'s notification panel and check Settings → Notifications for Chrome / E-Browser, and turn off Do Not Disturb / Focus Assist.'
+          : 'The server sent it, but it did not reach this device within 15 seconds. Check your internet, turn off battery saver for Chrome, and allow Chrome to run in the background.'
+      );
     } else {
       setNotice('Server found this device but the push service refused it. Turn notifications off and on again.');
     }

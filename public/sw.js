@@ -23,16 +23,22 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) {}
   const urgent = data.type === 'call';
   event.waitUntil(
-    self.registration.showNotification(data.title || 'Top stories', {
-      body: data.body || 'Tap to read the latest headlines',
-      icon: '/icon-192.png',
-      badge: '/favicon.png',
-      tag: urgent ? 'news-urgent' : 'news',
-      renotify: true,
-      requireInteraction: urgent,
-      vibrate: urgent ? [400, 200, 400, 200, 400] : [150],
-      data: { url: '/' },
-    })
+    Promise.all([
+      self.registration.showNotification(data.title || 'Top stories', {
+        body: data.body || 'Tap to read the latest headlines',
+        icon: '/icon-192.png',
+        badge: '/favicon.png',
+        tag: urgent ? 'news-urgent' : 'news',
+        renotify: true,
+        requireInteraction: urgent,
+        vibrate: urgent ? [400, 200, 400, 200, 400] : [150],
+        data: { url: '/' },
+      }),
+      // Tell any open page "the push arrived on this device" (used by Settings -> Send test notification).
+      self.clients
+        .matchAll({ type: 'window', includeUncontrolled: true })
+        .then((list) => list.forEach((c) => c.postMessage({ type: 'push-received', kind: data.type || 'message' }))),
+    ])
   );
 });
 
