@@ -84,6 +84,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   const [isPipSmall, setIsPipSmall] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmUnpair, setConfirmUnpair] = useState(false);
   const [status, setStatus] = useState<{ database: boolean; cloud: { configured: boolean; ok: boolean; error: string | null }; push: boolean } | null>(null);
 
   useEffect(() => {
@@ -97,14 +98,6 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
 
   // Blur + report when someone tries to screenshot while chat or a call is on screen
   useScreenProtection(active && (Boolean(partnerId) || callState !== 'idle'), reportScreenshot);
-
-  // Lock: wipe the chat from the screen and go back to the browser. The pairing and connection are untouched.
-  const lockNow = () => {
-    clearChat();
-    setShowSettings(false);
-    setConfirmClear(false);
-    onLock();
-  };
 
   // Auto-lock shortly after the app goes to the background (never during a call).
   const callStateForLock = React.useRef(callState);
@@ -544,14 +537,6 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
             <Video className="w-5 h-5" />
           </button>
           <button
-            onClick={lockNow}
-            aria-label="Lock"
-            title="Hide chat"
-            className="w-11 h-11 max-[359px]:w-9 max-[359px]:h-9 rounded-full flex items-center justify-center text-slate-300 hover:bg-slate-800 active:scale-90 transition-transform max-[359px]:w-9 max-[359px]:h-9"
-          >
-            <Lock className="w-5 h-5" />
-          </button>
-          <button
             onClick={() => setShowSettings((v) => !v)}
             aria-label="Settings"
             className={`w-11 h-11 max-[359px]:w-9 max-[359px]:h-9 rounded-full flex items-center justify-center active:scale-90 transition-transform ${
@@ -713,17 +698,37 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           </p>
 
           <div className="pt-2 text-center">
-            <button
-              onClick={() => {
-                if (confirm('Unpairing permanently disconnects you both. Continue?')) {
-                  unpair();
-                }
-              }}
-              className="inline-flex items-center gap-1.5 text-xs text-rose-400/80 hover:text-rose-400 py-2 px-3 rounded-xl hover:bg-rose-500/10"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Unpair</span>
-            </button>
+            {confirmUnpair ? (
+              <div className="inline-flex flex-col items-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+                <p className="text-xs text-rose-200">Unpairing permanently disconnects you both. Continue?</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setConfirmUnpair(false);
+                      setShowSettings(false);
+                      unpair();
+                    }}
+                    className="text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-xl px-4 py-2"
+                  >
+                    Yes, unpair
+                  </button>
+                  <button
+                    onClick={() => setConfirmUnpair(false)}
+                    className="text-xs font-semibold text-slate-200 bg-slate-700/70 hover:bg-slate-600 rounded-xl px-4 py-2"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmUnpair(true)}
+                className="inline-flex items-center gap-1.5 text-xs text-rose-400/80 hover:text-rose-400 py-2 px-3 rounded-xl hover:bg-rose-500/10"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Unpair</span>
+              </button>
+            )}
           </div>
         </div>
       )}

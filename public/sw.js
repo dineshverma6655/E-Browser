@@ -11,6 +11,12 @@ self.addEventListener('activate', (e) =>
   )
 );
 
+// Browsers only offer "Install app" when the worker has a fetch handler. This one never caches:
+// page loads go straight to the network, so every device always gets the latest deploy.
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode === 'navigate') event.respondWith(fetch(event.request));
+});
+
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) {}

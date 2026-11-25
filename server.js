@@ -3,6 +3,7 @@ const express = require('express');
 const { createServer } = require('http');
 const next = require('next');
 const { Server } = require('socket.io');
+const { WebSocketServer } = require('ws');
 const { ExpressPeerServer } = require('peer');
 const { createDb } = require('./server/db');
 const { createPush } = require('./server/push');
@@ -84,7 +85,35 @@ async function main() {
   });
 
   // PeerJS signaling server for the direct P2P media/data channels
-  serverApp.use('/peerjs', ExpressPeerServer(server, { debug: false, path: '/', corsOptions: { origin: allowedOrigins.length ? allowedOrigins : false } }));
+  // PeerJS and Socket.io share this HTTP server. PeerJS's default WebSocket server aborts EVERY upgrade request whose
+  // path is not its own (HTTP 400), which would force Socket.io down to slow long-polling. So PeerJS gets a
+  // `noServer` WebSocket server and we route WebSocket upgrades by path ourselves.
+  let peerWss = null;
+  let peerWsPath = null;
+  serverApp.use(
+    '/peerjs',
+    ExpressPeerServer(server, {
+      debug: false,
+      path: '/',
+      corsOptions: { origin: allowedOrigins.length ? allowedOrigins : false },
+      createWebSocketServer: (opts) => {
+        peerWsPath = opts.path;
+        peerWss = new WebSocketServer({ noServer: true });
+        return peerWss;
+      },
+    })
+  );
+  server.on('upgrade', (req, socket, head) => {
+    let pathname = '';
+    try {
+      pathname = new URL(req.url, 'http://localhost').pathname;
+    } catch {
+      return;
+    }
+    if (peerWss && pathname === peerWsPath) {
+      peerWss.handleUpgrade(req, socket, head, (ws) => peerWss.emit('connection', ws, req));
+    }
+  });
 
   serverApp.all('*', (req, res) => handle(req, res));
 
