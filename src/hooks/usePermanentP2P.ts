@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { DataConnection, MediaConnection } from 'peerjs';
 import { getSocket } from '@/lib/socket';
+import { backendUrl, peerEndpoint } from '@/lib/backend';
 import { ChatMessage, PeerMediaStatus, CallLogEntry, ReplyRef } from '@/types';
 
 type CallState = 'idle' | 'calling' | 'incoming' | 'connected';
@@ -602,14 +603,13 @@ export function usePermanentP2P() {
       if (peerRef.current) return peerRef.current;
       try {
         const { default: Peer } = await import('peerjs');
-        const isHttps = window.location.protocol === 'https:';
-        const port = window.location.port ? parseInt(window.location.port, 10) : isHttps ? 443 : 80;
+        const ep = peerEndpoint();
 
         const peer = new Peer(currentMyId, {
-          host: window.location.hostname,
-          port,
+          host: ep.host,
+          port: ep.port,
           path: '/peerjs',
-          secure: isHttps,
+          secure: ep.secure,
           config: { iceServers: iceRef.current },
         });
         peerRef.current = peer;
@@ -862,7 +862,7 @@ export function usePermanentP2P() {
 
     (async () => {
       try {
-        const cfg = await fetch('/api/config').then((r) => r.json());
+        const cfg = await fetch(backendUrl('/api/config')).then((r) => r.json());
         if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) iceRef.current = cfg.iceServers;
         vapidRef.current = cfg.vapidPublicKey || null;
       } catch {

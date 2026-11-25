@@ -6,6 +6,7 @@ import { VideoPlayer, RemoteAudio } from '@/components/VideoPlayer';
 import { CallControls } from '@/components/CallControls';
 import { ChatSheet } from '@/components/ChatSheet';
 import { useScreenProtection } from '@/hooks/useScreenProtection';
+import { backendUrl } from '@/lib/backend';
 import {
   Copy,
   Check,
@@ -88,7 +89,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   useEffect(() => {
     if (!showSettings) return;
     setStatus(null);
-    fetch('/api/status')
+    fetch(backendUrl('/api/status'))
       .then((r) => r.json())
       .then(setStatus)
       .catch(() => setStatus(null));

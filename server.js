@@ -28,6 +28,17 @@ async function main() {
   const serverApp = express();
   const server = createServer(serverApp);
 
+  // The frontend may be hosted on another origin (e.g. Vercel). CORS_ORIGIN = comma separated list of allowed origins.
+  const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  serverApp.use(['/api/status', '/api/config', '/healthz'], (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    next();
+  });
+
   serverApp.get('/healthz', async (_req, res) => {
     try {
       await db.pool.query('SELECT 1');
@@ -73,12 +84,12 @@ async function main() {
   });
 
   // PeerJS signaling server for the direct P2P media/data channels
-  serverApp.use('/peerjs', ExpressPeerServer(server, { debug: false, path: '/' }));
+  serverApp.use('/peerjs', ExpressPeerServer(server, { debug: false, path: '/', corsOptions: { origin: allowedOrigins.length ? allowedOrigins : false } }));
 
   serverApp.all('*', (req, res) => handle(req, res));
 
   const io = new Server(server, {
-    cors: { origin: process.env.CORS_ORIGIN || false },
+    cors: { origin: allowedOrigins.length ? allowedOrigins : false },
     maxHttpBufferSize: 6 * 1024 * 1024,
     transports: ['websocket', 'polling'],
   });
