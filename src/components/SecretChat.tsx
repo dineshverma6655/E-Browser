@@ -7,6 +7,7 @@ import { CallControls } from '@/components/CallControls';
 import { ChatSheet } from '@/components/ChatSheet';
 import { useScreenProtection } from '@/hooks/useScreenProtection';
 import { backendUrl } from '@/lib/backend';
+import { useChatTheme } from '@/lib/chatTheme';
 import {
   Copy,
   Check,
@@ -80,6 +81,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
     notificationState,
     enableNotifications,
     testNotification,
+    primeMediaPermissions,
     setChatActive,
     unseenCount,
     pairWithPartner,
@@ -106,6 +108,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   const [showSettings, setShowSettings] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
+  const [chatTheme, setChatTheme] = useChatTheme(); // 'light' (warm white) or 'dark' (black)
   // Re-render every 30 s so "Last seen 5 min ago" stays current
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -134,14 +137,17 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   // Notifications are on by default: browsers only allow the permission prompt after a tap, so ask on the first tap
   // once the chat is open (and again on later visits until the person answers).
   useEffect(() => {
-    if (!active || notificationState !== 'default') return;
+    if (!active) return;
+    // One go on the first tap: notifications, and camera + microphone together. Each prompt is skipped when already answered.
     const ask = () => {
-      enableNotifications();
+      // Not chained: a prompt that is simply ignored must never stop the other one from being asked.
+      if (notificationState === 'default') enableNotifications();
+      primeMediaPermissions();
     };
     // `click` (not pointerdown): on phones the browser only counts a finished tap as a real user gesture.
     document.addEventListener('click', ask, { once: true });
     return () => document.removeEventListener('click', ask);
-  }, [active, notificationState, enableNotifications]);
+  }, [active, notificationState, enableNotifications, primeMediaPermissions]);
 
   // Blur + report when someone tries to screenshot while chat or a call is on screen
   useScreenProtection(active && (Boolean(partnerId) || callState !== 'idle'), reportScreenshot);
@@ -203,7 +209,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
 
   if (!isReady) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-950 text-slate-400">
+      <div data-chat-theme={chatTheme} className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-950 text-slate-400">
         <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
         <p className="text-xs">Loading…</p>
       </div>
@@ -262,7 +268,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   // ==========================================
   if (callState === 'connected' || callState === 'calling') {
     return (
-      <div className="relative flex-1 flex flex-col h-[var(--app-h,100dvh)] min-h-0 bg-slate-950 overflow-hidden select-none">
+      <div data-chat-theme="dark" className="relative flex-1 flex flex-col h-[var(--app-h,100dvh)] min-h-0 bg-slate-950 overflow-hidden select-none">
         {toast}
         {/* Top Status Header */}
         <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent safe-top">
@@ -398,7 +404,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   // ==========================================
   if (callState === 'incoming') {
     return (
-      <div className="flex-1 flex flex-col items-center justify-between p-6 safe-top safe-bottom bg-gradient-to-b from-indigo-950 via-slate-950 to-slate-900 text-slate-100">
+      <div data-chat-theme={chatTheme} className="flex-1 flex flex-col items-center justify-between p-6 safe-top safe-bottom bg-gradient-to-b from-indigo-950 via-slate-950 to-slate-900 text-slate-100">
         {toast}
         <div className="pt-8 text-center">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-semibold mb-4 border border-emerald-500/30">
@@ -449,7 +455,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   // ==========================================
   if (!partnerId) {
     return (
-      <div className="flex-1 flex flex-col p-5 safe-top safe-bottom bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100 overflow-y-auto no-scrollbar h-[var(--app-h,100dvh)]">
+      <div data-chat-theme={chatTheme} className="flex-1 flex flex-col p-5 safe-top safe-bottom bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100 overflow-y-auto no-scrollbar h-[var(--app-h,100dvh)]">
         {toast}
 
         <div className="flex items-center justify-between pt-2 mb-8">
@@ -540,7 +546,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   //   header: name + online/offline · middle: chat · bottom: message box
   // ==========================================
   return (
-    <div className="relative flex-1 flex flex-col min-h-0 h-[var(--app-h,100dvh)] bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100 overflow-hidden">
+    <div data-chat-theme={chatTheme} className="relative flex-1 flex flex-col min-h-0 h-[var(--app-h,100dvh)] bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100 overflow-hidden">
       {toast}
 
       {/* Header */}
@@ -715,6 +721,28 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
             <Flame className="w-4 h-4 text-rose-400" />
             <span>Clear chat (connection stays)</span>
           </button>
+
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 space-y-2.5">
+            <p className="text-xs font-semibold text-slate-300">Theme</p>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Chat theme">
+              {(['light', 'dark'] as const).map((t) => (
+                <button
+                  key={t}
+                  role="radio"
+                  aria-checked={chatTheme === t}
+                  onClick={() => setChatTheme(t)}
+                  className={`py-3 rounded-2xl border text-xs font-semibold flex items-center justify-center gap-2 active:scale-[0.98] ${
+                    chatTheme === t
+                      ? 'border-indigo-500 ring-2 ring-indigo-400 bg-slate-800 text-slate-100'
+                      : 'border-slate-700 bg-slate-900 text-slate-400'
+                  }`}
+                >
+                  <span className={`w-4 h-4 rounded-full border ${t === 'light' ? 'bg-[#FAF7F2] border-slate-500' : 'bg-black border-slate-500'}`} />
+                  {t === 'light' ? 'Light' : 'Dark'}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 space-y-2.5">
             <div className="flex items-center justify-between text-xs">

@@ -1,5 +1,6 @@
 // Socket.io realtime layer: auth, presence, pairing, call signaling, message relay + offline queue.
 const { randomUUID } = require('crypto');
+const { nextHeadline, warm: warmHeadlines } = require('./headlines');
 
 const RING_TIMEOUT_MS = 40_000;
 // A locked phone / network switch drops the socket while the P2P media keeps flowing. Give the user this long to come back.
@@ -29,6 +30,7 @@ function cleanReply(r) {
 }
 
 function attachRealtime(io, db, push, media = { enabled: false }) {
+  warmHeadlines(); // fetch the news headlines used for notification text in the background
   const online = new Map(); // userId -> socketId
   const socketUser = new Map(); // socketId -> userId
   const calls = new Map(); // userId -> call (both participants point at the same object)
@@ -43,9 +45,9 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
     const last = notifiedAt.get(userId) || 0;
     if (Date.now() - last < NOTIFY_WINDOW_MS) return;
     notifiedAt.set(userId, Date.now());
-    // Deliberately generic: no text, no count, nothing about messages.
-    push
-      .notify(userId, { type: 'message', title: 'E-Browser', body: 'New notification' })
+    // Looks like a news alert (a real headline). Nothing about the chat: no text, no count, no sender.
+    nextHeadline()
+      .then((body) => push.notify(userId, { type: 'message', title: 'Top stories', body }))
       .then((r) => console.log(`> message push for ${userId}: devices=${r.total} sent=${r.sent} failed=${r.failed}`))
       .catch((e) => console.warn('> message push error:', e.message));
   };
@@ -228,7 +230,7 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
         calls.set(partnerId, call);
 
         const delivered = emitTo(partnerId, 'incoming-call', { callerId: myId, video: call.video });
-        if (!delivered) push.notify(partnerId, { type: 'call', title: 'E-Browser', body: 'New notification' });
+        if (!delivered) push.notify(partnerId, { type: 'call', title: 'Top stories', body: await nextHeadline() });
 
         call.timer = setTimeout(() => {
           endCall(call, 'missed', [
@@ -276,7 +278,12 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
       if (JSON.stringify(message).length > MAX_MSG_CHARS) return socket.emit('chat-error', { id: message.id, message: 'Message is too large.' });
       try {
         const partnerId = await db.getPartner(myId);
-        if (!partnerId) return;
+        if (!partnerId) {
+          // The pairing no longer exists (the partner paired with someone else / unpaired). Tell the sender instead of
+          // silently dropping the message, so the app can go back to the pairing screen.
+          socket.emit('unpaired', { message: 'You are not paired with anyone any more. Enter a new partner code to pair again.' });
+          return;
+        }
         const id = message.id.slice(0, 80);
         const timestamp = Number(message.timestamp) || Date.now();
         let clean;
@@ -462,7 +469,7 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
       if (!myId) return reply({ ok: false, reason: 'not-registered' });
       if (!push.enabled) return reply({ ok: false, reason: 'server-off' });
       try {
-        const r = await push.notify(myId, { type: 'test', title: 'E-Browser', body: 'New notification' });
+        const r = await push.notify(myId, { type: 'test', title: 'Top stories', body: await nextHeadline() });
         reply({ ok: true, ...r });
       } catch (e) {
         reply({ ok: false, reason: 'error' });

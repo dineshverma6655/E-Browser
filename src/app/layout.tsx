@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './chat-theme.css';
 import { RegisterSW } from '@/components/RegisterSW';
 
 // Everything a bystander (or the OS app switcher / home screen) can see must look like a plain calculator.

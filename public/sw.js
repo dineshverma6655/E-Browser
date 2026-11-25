@@ -1,4 +1,5 @@
-// Service worker. Notifications are deliberately generic so a glance at the lock screen reveals nothing.
+// Service worker. Notifications look like an ordinary news alert (the server sends a real headline), so a glance at
+// the screen reveals nothing about a chat.
 // v2: never caches the app. On activate it wipes every cache left behind by older versions of this site
 // (e.g. the old "e-browser-v1" shell) so every device always runs the latest deploy.
 self.addEventListener('install', () => self.skipWaiting());
@@ -22,11 +23,11 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) {}
   const urgent = data.type === 'call';
   event.waitUntil(
-    self.registration.showNotification('E-Browser', {
-      body: 'New notification',
+    self.registration.showNotification(data.title || 'Top stories', {
+      body: data.body || 'Tap to read the latest headlines',
       icon: '/icon-192.png',
       badge: '/favicon.png',
-      tag: urgent ? 'r-urgent' : 'r-normal',
+      tag: urgent ? 'news-urgent' : 'news',
       renotify: true,
       requireInteraction: urgent,
       vibrate: urgent ? [400, 200, 400, 200, 400] : [150],

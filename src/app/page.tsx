@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FakeBrowser } from '@/components/FakeBrowser';
 import { SecretChat } from '@/components/SecretChat';
+import { CHAT_THEME_COLORS, useChatTheme } from '@/lib/chatTheme';
 
 // To anyone looking at the screen this is an ordinary web browser. The chat sits behind a secret code that is
 // typed into the address/search bar. SecretChat stays mounted (but hidden) while locked, so calls, messages and
@@ -11,6 +12,7 @@ const SECRET_CODE = process.env.NEXT_PUBLIC_SECRET_CODE || '28112005';
 
 export default function Shell() {
   const [unlocked, setUnlocked] = useState(false);
+  const [chatTheme] = useChatTheme();
 
   const unlockedRef = useRef(false);
   unlockedRef.current = unlocked;
@@ -42,11 +44,13 @@ export default function Shell() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // Status-bar colour matches whichever screen is showing
+  // Status-bar colour and the area behind the app match whichever screen is showing (fake browser = white, chat = its theme)
   useEffect(() => {
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', unlocked ? '#090d16' : '#ffffff');
-  }, [unlocked]);
+    if (meta) meta.setAttribute('content', unlocked ? CHAT_THEME_COLORS[chatTheme] : '#ffffff');
+    if (unlocked) document.documentElement.setAttribute('data-chat-bg', chatTheme);
+    else document.documentElement.removeAttribute('data-chat-bg');
+  }, [unlocked, chatTheme]);
 
   return (
     <>

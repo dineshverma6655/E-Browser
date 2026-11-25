@@ -161,6 +161,20 @@ export function usePermanentP2P() {
   const unseenRef = useRef<Set<string>>(new Set()); // partner messages on screen but not yet confirmed as seen
   const seenIdsRef = useRef<Set<string>>(new Set()); // my messages the partner has seen
   const chatActiveRef = useRef(false); // the chat is unlocked and the app is in front (used for notification "presence")
+  // Messages typed while the connection is down (phone network switch, server restart, app waking up). socket.io would
+  // flush its own buffer BEFORE we re-register, and the server drops anything from an unregistered socket - so such messages
+  // were lost. We keep them here and send them right after the server has accepted our registration.
+  const registeredRef = useRef(false);
+  const outboxRef = useRef<Array<[string, unknown]>>([]);
+  const emitReliable = useCallback((event: string, payload: unknown) => {
+    const socket = getSocket();
+    if (registeredRef.current && socket.connected) {
+      socket.emit(event, payload);
+    } else {
+      outboxRef.current.push([event, payload]);
+      if (outboxRef.current.length > 300) outboxRef.current.shift();
+    }
+  }, []);
   const chatOnScreenRef = useRef(false); // messages are literally on screen (chat list, or the chat sheet during a call) - only then SEEN
   const [unseenCount, setUnseenCount] = useState(0); // partner messages that have arrived but are not on screen yet (call badge)
   const isFrontRef = useRef(true);
@@ -267,7 +281,7 @@ export function usePermanentP2P() {
     const ids = Array.from(unseenRef.current);
     unseenRef.current.clear();
     setUnseenCount(0);
-    getSocket().emit('messages-seen', { ids });
+    emitReliable('messages-seen', { ids });
     // Call records are shown once: they disappear a few seconds after they have been seen.
     ids.filter((id) => id.startsWith('call-') || id.startsWith('seen-')).forEach((id) => setTimeout(() => removeMsg(id), 10000));
     const conn = dataConnRef.current;
@@ -314,7 +328,7 @@ export function usePermanentP2P() {
     const current = messagesRef.current.find((m) => m.id === msgId)?.reactions?.me;
     const next = current === emoji ? null : emoji; // tapping the same emoji again removes it
     setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, reactions: { ...m.reactions, me: next || undefined } } : m)));
-    getSocket().emit('reaction', { msgId, emoji: next });
+    emitReliable('reaction', { msgId, emoji: next });
   }, []);
 
   const deleteForMe = useCallback((id: string) => {
@@ -333,7 +347,7 @@ export function usePermanentP2P() {
       if (!m || m.sender !== 'me') return;
       tombstone(id);
       setReplyTarget((t) => (t && t.id === id ? null : t));
-      getSocket().emit('delete-message', { id });
+      emitReliable('delete-message', { id });
     },
     [tombstone]
   );
@@ -350,7 +364,7 @@ export function usePermanentP2P() {
         console.warn('P2P send failed, using relay:', e);
       }
     }
-    const relay = () => getSocket().emit('chat-message', { message });
+    const relay = () => emitReliable('chat-message', { message });
     if (!viaP2P) relay();
     else setTimeout(() => !seenIdsRef.current.has(message.id) && relay(), 4000);
   }, []);
@@ -750,6 +764,35 @@ export function usePermanentP2P() {
     if (perm === 'granted') subscribePush();
   }, [subscribePush]);
 
+  // Ask for camera AND microphone together, once, with a single browser prompt, instead of one prompt per call.
+  // Nothing is kept: the stream is stopped at once; the browser just remembers the answer for later calls.
+  const primeMediaPermissions = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+    const stateOf = async (name: string) => {
+      try {
+        return (await navigator.permissions.query({ name: name as PermissionName })).state;
+      } catch {
+        return 'unknown'; // e.g. Safari: just ask
+      }
+    };
+    const [cam, mic] = await Promise.all([stateOf('camera'), stateOf('microphone')]);
+    if (cam === 'granted' && mic === 'granted') return; // nothing left to ask
+    if (cam === 'denied' && mic === 'denied') return; // blocked in the browser: asking again would do nothing
+    const stop = (s: MediaStream) => s.getTracks().forEach((t) => t.stop());
+    try {
+      stop(await navigator.mediaDevices.getUserMedia({ audio: true, video: true }));
+    } catch (e) {
+      // Only when the device has no camera at all, ask for the microphone alone. If the person tapped "Block", never ask again.
+      if ((e as DOMException)?.name === 'NotFoundError' || (e as DOMException)?.name === 'OverconstrainedError') {
+        try {
+          stop(await navigator.mediaDevices.getUserMedia({ audio: true }));
+        } catch {
+          /* no microphone either, or refused */
+        }
+      }
+    }
+  }, []);
+
   // Settings → "Send test notification": asks for permission if needed, registers this device, then pushes to it and
   // tells the person in plain words what happened (so a missing notification can be diagnosed without guessing).
   const testNotification = useCallback(async () => {
@@ -799,6 +842,7 @@ export function usePermanentP2P() {
       socket.emit('register-user', { userId: myId, secret: secretRef.current });
     };
     const onDisconnect = () => {
+      registeredRef.current = false;
       setSocketConnected(false);
       updatePartnerOnline(false);
     };
@@ -811,6 +855,10 @@ export function usePermanentP2P() {
 
     const onRegistered = ({ partnerId: serverPartner, isPartnerOnline: online, partnerLastSeen: seenAt, inCall }: any) => {
       reportVisibility();
+      // Registered: now it is safe to send everything that was typed while we were offline.
+      registeredRef.current = true;
+      const pending = outboxRef.current.splice(0);
+      pending.forEach(([event, payload]) => socket.emit(event, payload));
       setPartnerLastSeen(typeof seenAt === 'number' ? seenAt : null);
       // The call may have ended while we were disconnected (we missed the 'call-ended' signal): drop the stale call screen.
       if (!inCall && callStateRef.current !== 'idle') resetCall();
@@ -851,7 +899,9 @@ export function usePermanentP2P() {
       if (online) connectToPartner();
     };
 
-    const onUnpaired = () => {
+    const onUnpaired = (info?: { message?: string }) => {
+      // Our own "Unpaired." confirmation needs no extra toast; any other reason does.
+      if (info?.message && info.message !== 'Unpaired.') setNotice(info.message);
       resetCall();
       updatePartner(null);
       updatePartnerOnline(false);
@@ -1279,17 +1329,17 @@ export function usePermanentP2P() {
         socket.timeout(10000).emit('media-upload-url', { kind: 'image', mime, size: blob.size }, (err: any, res: any) => resolve(err ? { error: 'timeout' } : res))
       );
       if (info.error === 'disabled') {
-        socket.emit('chat-message', { message: msg });
+        emitReliable('chat-message', { message: msg });
         return;
       }
       if (info.error) throw new Error(info.error);
       await uploadWithProgress(info.url, blob, () => {}, mime);
-      socket.emit('chat-message', { message: { id: msg.id, timestamp: msg.timestamp, replyTo: msg.replyTo, media: { key: info.key, kind: 'image', mime, size: blob.size } } });
+      emitReliable('chat-message', { message: { id: msg.id, timestamp: msg.timestamp, replyTo: msg.replyTo, media: { key: info.key, kind: 'image', mime, size: blob.size } } });
     } catch (e) {
       // Cloud storage unreachable (e.g. CORS not set on the bucket). Photos are already small, so send this one through the
       // database relay instead: it is stored there until the partner has seen it, exactly like a text message.
       console.warn('photo upload to cloud failed, using the database relay', e);
-      socket.emit('chat-message', { message: msg });
+      emitReliable('chat-message', { message: msg });
     }
   }, []);
 
@@ -1389,7 +1439,7 @@ export function usePermanentP2P() {
       } catch {
         return fail('Video upload failed. Check your connection and try again.');
       }
-      socket.emit('chat-message', { message: { id, timestamp, replyTo, media: { key: info.key, kind: 'video', mime: file.type || 'video/mp4', size: file.size } } });
+      emitReliable('chat-message', { message: { id, timestamp, replyTo, media: { key: info.key, kind: 'video', mime: file.type || 'video/mp4', size: file.size } } });
       finish();
       setNotice('Video uploaded. Your partner will get it as soon as they open the app.');
       return true;
@@ -1530,6 +1580,7 @@ export function usePermanentP2P() {
     clearChat,
     enableNotifications,
     testNotification,
+    primeMediaPermissions,
     setChatActive,
     unseenCount,
     dismissNotice: () => setNotice(null),
