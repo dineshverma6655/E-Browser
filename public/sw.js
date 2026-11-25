@@ -1,6 +1,15 @@
 // Service worker. Notifications are deliberately generic so a glance at the lock screen reveals nothing.
+// v2: never caches the app. On activate it wipes every cache left behind by older versions of this site
+// (e.g. the old "e-browser-v1" shell) so every device always runs the latest deploy.
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (e) =>
+  e.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  )
+);
 
 self.addEventListener('push', (event) => {
   let data = {};

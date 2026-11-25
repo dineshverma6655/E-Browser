@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { RegisterSW } from '@/components/RegisterSW';
 
 // Everything a bystander (or the OS app switcher / home screen) can see must look like a plain calculator.
 export const metadata: Metadata = {
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className="dark">
       <body className="bg-white text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
+        <RegisterSW />
         <main className="mobile-app-shell">{children}</main>
       </body>
     </html>
