@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<title>E-Browser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="E-Browser - tez, saaf aur simple web browser. Apne phone me install karein.">
+<meta name="theme-color" content="#ffffff">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="E-Browser">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Install banner: dikhta hai jaise hi site khulti hai -->
+<div id="installBar" hidden>
+  <img src="/icons/icon-96.png" alt="" width="34" height="34">
+  <div class="ib-text"><strong>E-Browser app install karein</strong><span>Phone ki home screen par, bilkul app ki tarah</span></div>
+  <button id="installBarBtn" class="ib-btn" type="button">Install</button>
+  <button id="installBarClose" class="ib-x" type="button" aria-label="Band karein" data-ic="x"></button>
+</div>
+
+<header id="top">
+  <div id="tabsRow">
+    <div id="tabs" role="tablist"></div>
+    <button id="newTabBtn" class="ibtn" type="button" aria-label="Naya tab" title="Naya tab" data-ic="plus"></button>
+  </div>
+  <div id="bar">
+    <button id="backBtn" class="ibtn" type="button" aria-label="Peeche" title="Peeche" data-ic="back"></button>
+    <button id="fwdBtn" class="ibtn hide-sm" type="button" aria-label="Aage" title="Aage" data-ic="fwd"></button>
+    <button id="reloadBtn" class="ibtn hide-sm" type="button" aria-label="Reload" title="Reload" data-ic="reload"></button>
+    <button id="homeBtn" class="ibtn hide-sm" type="button" aria-label="Home" title="Home" data-ic="home"></button>
+    <form id="omni" autocomplete="off">
+      <span id="lock" class="lock" aria-hidden="true"></span>
+      <input id="addr" type="text" inputmode="url" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Search karein ya address likhein" aria-label="Address bar">
+      <button id="starBtn" class="ibtn sm" type="button" aria-label="Bookmark" title="Bookmark" data-ic="star"></button>
+    </form>
+    <button id="installBtn" class="install-pill" type="button" hidden><span data-ic="download"></span><b>Install</b></button>
+    <button id="menuBtn" class="ibtn" type="button" aria-label="Menu" title="Menu" data-ic="menu"></button>
+  </div>
+  <div id="progress"><i></i></div>
+  <div id="sugg" hidden></div>
+</header>
+
+<main id="views">
+  <section id="home">
+    <div class="home-in">
+      <img class="home-logo" src="/icons/logo.png" alt="E-Browser" width="104" height="104">
+      <h1>E-Browser</h1>
+      <p class="tag">Tez. Saaf. Aapka apna browser.</p>
+      <form id="homeForm" autocomplete="off">
+        <span data-ic="search"></span>
+        <input id="homeInput" type="text" inputmode="search" enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Search karein ya website ka address likhein" aria-label="Search">
+      </form>
+      <div id="tiles"></div>
+      <div id="homeInstall" class="install-card" hidden>
+        <img src="/icons/icon-96.png" alt="" width="44" height="44">
+        <div><strong>App ki tarah install karein</strong><span>Home screen se ek tap me khulega, full screen me.</span></div>
+        <button type="button" class="cta" id="homeInstallBtn">Install</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- menu -->
+<div id="menuScrim" hidden></div>
+<nav id="menu" hidden aria-label="Menu">
+  <div class="mrow">
+    <button type="button" data-act="forward" aria-label="Aage" data-ic="fwd"></button>
+    <button type="button" data-act="reload" aria-label="Reload" data-ic="reload"></button>
+    <button type="button" data-act="star" aria-label="Bookmark" data-ic="star"></button>
+    <button type="button" data-act="home" aria-label="Home" data-ic="home"></button>
+  </div>
+  <button type="button" class="mi" data-act="newtab"><span data-ic="plus"></span>Naya tab</button>
+  <button type="button" class="mi" data-act="bookmarks"><span data-ic="star"></span>Bookmarks</button>
+  <button type="button" class="mi" data-act="history"><span data-ic="clock"></span>History</button>
+  <button type="button" class="mi" data-act="external"><span data-ic="ext"></span>Real browser me kholein</button>
+  <button type="button" class="mi" data-act="install" id="menuInstall"><span data-ic="download"></span>E-Browser install karein</button>
+  <button type="button" class="mi" data-act="settings"><span data-ic="gear"></span>Settings</button>
+</nav>
+
+<!-- bottom sheet -->
+<div id="sheet" hidden>
+  <div class="scrim" data-close></div>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="ph"><h2 id="sheetTitle"></h2><button type="button" class="ibtn" data-close aria-label="Band karein" data-ic="x"></button></div>
+    <div class="pb" id="sheetBody"></div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

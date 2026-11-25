@@ -1,0 +1,9 @@
+{
+  "name": "e-browser",
+  "version": "1.0.0",
+  "description": "E-Browser - installable mobile web browser (PWA)",
+  "private": true,
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "dev": "node server.js" },
+  "engines": { "node": ">=18" }
+}
