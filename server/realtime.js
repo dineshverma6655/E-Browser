@@ -44,7 +44,10 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
     if (Date.now() - last < NOTIFY_WINDOW_MS) return;
     notifiedAt.set(userId, Date.now());
     // Deliberately generic: no text, no count, nothing about messages.
-    push.notify(userId, { type: 'message', title: 'E-Browser', body: 'New notification' });
+    push
+      .notify(userId, { type: 'message', title: 'E-Browser', body: 'New notification' })
+      .then((r) => console.log(`> message push for ${userId}: devices=${r.total} sent=${r.sent} failed=${r.failed}`))
+      .catch((e) => console.warn('> message push error:', e.message));
   };
 
   const emitTo = (userId, event, data) => {
@@ -439,10 +442,31 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
       }
     });
 
-    socket.on('push-subscribe', async ({ subscription } = {}) => {
+    socket.on('push-subscribe', async ({ subscription } = {}, ack) => {
+      const reply = typeof ack === 'function' ? ack : () => {};
       const myId = me();
-      if (!myId || !subscription || typeof subscription.endpoint !== 'string') return;
-      await db.savePushSubscription(myId, subscription).catch((e) => console.error('push-subscribe', e));
+      if (!myId || !subscription || typeof subscription.endpoint !== 'string') return reply({ ok: false });
+      try {
+        await db.savePushSubscription(myId, subscription);
+        reply({ ok: true });
+      } catch (e) {
+        console.error('push-subscribe', e);
+        reply({ ok: false });
+      }
+    });
+
+    // "Send test notification" button in settings: pushes to this user's own devices right now.
+    socket.on('push-test', async (_p, ack) => {
+      const reply = typeof ack === 'function' ? ack : () => {};
+      const myId = me();
+      if (!myId) return reply({ ok: false, reason: 'not-registered' });
+      if (!push.enabled) return reply({ ok: false, reason: 'server-off' });
+      try {
+        const r = await push.notify(myId, { type: 'test', title: 'E-Browser', body: 'New notification' });
+        reply({ ok: true, ...r });
+      } catch (e) {
+        reply({ ok: false, reason: 'error' });
+      }
     });
 
     socket.on('disconnect', async () => {

@@ -236,7 +236,6 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
 
   const [settings, setSettings] = usePersisted<Settings>('settings', DEFAULT_SETTINGS);
   const { canPrompt, standalone, ios, promptInstall } = useInstall();
-  const [installTipHidden, setInstallTipHidden] = usePersisted<boolean>('installTipHidden', false);
   const [showInstallSteps, setShowInstallSteps] = useState(false);
   const [favs, setFavs] = usePersisted<Fav[]>('favorites', []);
   const [hist, setHist] = usePersisted<Hist[]>('history', []);
@@ -268,8 +267,7 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
       setShowInstallSteps(true);
       say(ios ? 'Tap Share, then "Add to Home Screen"' : 'Browser menu ⋮ → "Install app" / "Add to Home screen"');
     }
-    if (r === 'accepted') setInstallTipHidden(true);
-  }, [promptInstall, setInstallTipHidden, say, ios]);
+  }, [promptInstall, say, ios]);
 
   const patchTab = useCallback((id: string, patch: Partial<Tab>) => setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t))), []);
 
@@ -579,14 +577,10 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
                 </div>
               )}
 
-              {!standalone && !installTipHidden && (
+              {/* Permanent: stays on the start page until the app is opened as an installed app. */}
+              {!standalone && (
                 <div className="rounded-2xl bg-black/50 backdrop-blur p-4 mb-3 text-white">
-                  <div className="flex items-start justify-between gap-3 pb-2 mb-2 border-b border-white/15">
-                    <p className="text-[12px] text-white/65">Install</p>
-                    <button onClick={() => setInstallTipHidden(true)} aria-label="Dismiss" className="-mt-1 -mr-1 p-1 text-white/60 active:scale-90">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
+                  <p className="text-[12px] text-white/65 pb-2 mb-2 border-b border-white/15">Install</p>
                   <p className="text-[16px] font-semibold">Install E-Browser</p>
                   <p className="text-[13px] text-white/75 mt-0.5">Add it to your home screen to open it like an app.</p>
                   <button onClick={doInstall} className="mt-3 h-9 px-5 rounded-full bg-sky-600 text-[14px] font-semibold active:scale-95">

@@ -45,6 +45,8 @@ interface ChatSheetProps {
   onSendVideo?: (file: File) => Promise<boolean> | boolean | void;
   onSaveMedia?: (msg: ChatMessage) => void;
   onClearChat?: () => void;
+  /** closing the sheet only hides it (used during a call, so messages are not lost while the call is running) */
+  keepOnClose?: boolean;
   onNotice?: (message: string) => void;
   /** reply / react / delete (long-press menu) */
   replyTarget?: ChatMessage | null;
@@ -103,6 +105,7 @@ export const ChatSheet: React.FC<ChatSheetProps> = ({
   onSendVideo,
   onSaveMedia,
   onClearChat,
+  keepOnClose = false,
   onNotice,
   replyTarget = null,
   onReply,
@@ -168,7 +171,7 @@ export const ChatSheet: React.FC<ChatSheetProps> = ({
     setViewer(null);
     setMenu(null);
     setDeleteAsk(null);
-    onClearChat?.();
+    if (!keepOnClose) onClearChat?.();
     onClose();
   };
 

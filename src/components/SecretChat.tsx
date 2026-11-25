@@ -79,7 +79,9 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
     callHistory,
     notificationState,
     enableNotifications,
+    testNotification,
     setChatActive,
+    unseenCount,
     pairWithPartner,
     unpair,
     startCall,
@@ -122,9 +124,12 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   }, [showSettings]);
 
   // Tell the hook when the chat is really open: "seen" only counts then, and the server re-sends anything still unseen.
+  // While a call is on, the messages are only "on screen" when the chat sheet is open over the video.
+  const inCallView = callState === 'connected' || callState === 'calling';
+  const messagesOnScreen = active && (callState === 'idle' ? true : inCallView ? isChatOpen : false);
   useEffect(() => {
-    setChatActive(active);
-  }, [active, setChatActive]);
+    setChatActive(active, messagesOnScreen);
+  }, [active, messagesOnScreen, setChatActive]);
 
   // Notifications are on by default: browsers only allow the permission prompt after a tap, so ask on the first tap
   // once the chat is open (and again on later visits until the person answers).
@@ -286,9 +291,15 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
 
           <button
             onClick={() => setIsChatOpen(true)}
-            className="p-2 rounded-full bg-black/50 border border-white/10 text-white"
+            aria-label={unseenCount > 0 ? `${unseenCount} new messages` : 'Chat'}
+            className="relative p-2 rounded-full bg-black/50 border border-white/10 text-white"
           >
             <MessageSquare className="w-4 h-4" />
+            {unseenCount > 0 && !isChatOpen && (
+              <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center border border-slate-950 animate-pulse">
+                {unseenCount > 9 ? '9+' : unseenCount}
+              </span>
+            )}
           </button>
         </div>
 
@@ -353,16 +364,14 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           onEndCall={endCall}
           onToggleChat={() => setIsChatOpen((p) => !p)}
           isChatOpen={isChatOpen}
-          unreadCount={0}
+          unreadCount={unseenCount}
         />
 
         {/* Sliding P2P Chat (Snapchat Style) */}
         <ChatSheet
           isOpen={isChatOpen}
-          onClose={() => {
-            clearChat();
-            setIsChatOpen(false);
-          }}
+          keepOnClose
+          onClose={() => setIsChatOpen(false)}
           messages={messages}
           onSendMessage={sendMessage}
           onSendPhoto={sendPhoto}
@@ -707,15 +716,42 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
             <span>Clear chat (connection stays)</span>
           </button>
 
-          {notificationState === 'default' && (
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-300 flex items-center gap-2">
+                <Bell className="w-4 h-4 text-indigo-400" /> Notifications on this device
+              </span>
+              <span
+                className={
+                  notificationState === 'granted'
+                    ? 'text-emerald-400'
+                    : notificationState === 'denied'
+                      ? 'text-rose-400'
+                      : 'text-slate-400'
+                }
+              >
+                {notificationState === 'granted'
+                  ? 'Allowed'
+                  : notificationState === 'denied'
+                    ? 'Blocked'
+                    : notificationState === 'unsupported'
+                      ? 'Not available here'
+                      : 'Not asked yet'}
+              </span>
+            </div>
             <button
-              onClick={enableNotifications}
-              className="w-full py-3 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-indigo-300 text-xs font-medium flex items-center justify-center gap-2"
+              onClick={testNotification}
+              className="w-full py-3 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 text-indigo-300 text-xs font-medium flex items-center justify-center gap-2 active:scale-[0.99]"
             >
               <Bell className="w-4 h-4" />
-              <span>Turn on notifications</span>
+              <span>{notificationState === 'granted' ? 'Send test notification' : 'Turn on notifications'}</span>
             </button>
-          )}
+            {notificationState === 'denied' && (
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Blocked in the browser. Tap the lock icon next to the address, open Notifications and choose Allow.
+              </p>
+            )}
+          </div>
 
           {callHistory.length > 0 && (
             <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4">

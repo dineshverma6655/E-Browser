@@ -160,7 +160,9 @@ export function usePermanentP2P() {
   const knownIdsRef = useRef<Set<string>>(new Set()); // message ids already on screen (avoids duplicates P2P + cloud)
   const unseenRef = useRef<Set<string>>(new Set()); // partner messages on screen but not yet confirmed as seen
   const seenIdsRef = useRef<Set<string>>(new Set()); // my messages the partner has seen
-  const chatActiveRef = useRef(false); // the chat is open (unlocked) — only then can anything count as SEEN
+  const chatActiveRef = useRef(false); // the chat is unlocked and the app is in front (used for notification "presence")
+  const chatOnScreenRef = useRef(false); // messages are literally on screen (chat list, or the chat sheet during a call) - only then SEEN
+  const [unseenCount, setUnseenCount] = useState(0); // partner messages that have arrived but are not on screen yet (call badge)
   const isFrontRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -215,6 +217,7 @@ export function usePermanentP2P() {
     });
     // Whatever was not seen before the chat was wiped stays on the server and comes back when the chat is opened again.
     unseenRef.current.clear();
+    setUnseenCount(0);
   }, []);
 
   const updateMsg = useCallback((id: string, patch: Partial<ChatMessage>) => {
@@ -259,10 +262,11 @@ export function usePermanentP2P() {
   // Tell the server (→ deletes from DB) and the sender that these messages were actually seen. Only while the app is visible.
   const flushSeen = useCallback(() => {
     if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
-    if (!chatActiveRef.current) return; // a message only counts as seen while it is really on screen in the open chat
+    if (!chatOnScreenRef.current) return; // a message only counts as seen while it is really on screen
     if (unseenRef.current.size === 0) return;
     const ids = Array.from(unseenRef.current);
     unseenRef.current.clear();
+    setUnseenCount(0);
     getSocket().emit('messages-seen', { ids });
     // Call records are shown once: they disappear a few seconds after they have been seen.
     ids.filter((id) => id.startsWith('call-') || id.startsWith('seen-')).forEach((id) => setTimeout(() => removeMsg(id), 10000));
@@ -279,6 +283,8 @@ export function usePermanentP2P() {
   const noteUnseen = useCallback(
     (id: string) => {
       unseenRef.current.add(id);
+      // Call records and "seen" receipts are not messages: they never count for the unread badge.
+      setUnseenCount(Array.from(unseenRef.current).filter((x) => !x.startsWith('call-') && !x.startsWith('seen-')).length);
       flushSeen();
     },
     [flushSeen]
@@ -456,7 +462,13 @@ export function usePermanentP2P() {
     }
   }, []);
 
+  const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const resetCall = useCallback(() => {
+    if (connectTimerRef.current) {
+      clearTimeout(connectTimerRef.current);
+      connectTimerRef.current = null;
+    }
     callAcceptedRef.current = false;
     hasRealVideoRef.current = false;
     if (activeMediaCallRef.current) {
@@ -470,10 +482,29 @@ export function usePermanentP2P() {
     updateCallState('idle');
   }, [stopLocalStream, updateCallState]);
 
+  // Both phones agreed to the call but the direct (peer-to-peer) link never came up. This is typical when the two phones are on
+  // different mobile networks and no TURN relay is configured. Without this the screen would say "calling" forever.
+  const armConnectTimeout = useCallback(() => {
+    if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
+    connectTimerRef.current = setTimeout(() => {
+      connectTimerRef.current = null;
+      if (callStateRef.current === 'idle') return;
+      const ice = activeMediaCallRef.current?.peerConnection?.iceConnectionState || 'not started';
+      console.warn('[call] media did not connect within 25 s. ICE state:', ice);
+      getSocket().emit('end-call');
+      resetCall();
+      setNotice(`The call could not connect (${ice}). The two phones could not reach each other directly. Try the same Wi-Fi, or add a TURN server.`);
+    }, 25000);
+  }, [resetCall]);
+
   const attachMediaCall = useCallback(
     (call: MediaConnection) => {
       activeMediaCallRef.current = call;
       call.on('stream', (s: MediaStream) => {
+        if (connectTimerRef.current) {
+          clearTimeout(connectTimerRef.current);
+          connectTimerRef.current = null;
+        }
         setRemoteStream(s);
         updateCallState('connected');
         // Voice call: the partner's video is just a placeholder until they switch their camera on.
@@ -670,9 +701,11 @@ export function usePermanentP2P() {
     [attachMediaCall, connectToPartner, initLocalStream, setupDataConnection]
   );
 
-  const subscribePush = useCallback(async () => {
+  // Registers this device for push and makes sure the SERVER stored it. Returns why it failed, if it did.
+  const subscribePush = useCallback(async (): Promise<'ok' | 'unsupported' | 'no-key' | 'failed'> => {
     try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !vapidRef.current) return;
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+      if (!vapidRef.current) return 'no-key';
       const reg = await navigator.serviceWorker.register('/sw.js');
       await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
@@ -682,22 +715,30 @@ export function usePermanentP2P() {
           applicationServerKey: urlBase64ToUint8Array(vapidRef.current),
         });
       }
-      getSocket().emit('push-subscribe', { subscription: sub.toJSON() });
+      const saved: any = await new Promise((resolve) =>
+        getSocket().timeout(8000).emit('push-subscribe', { subscription: sub!.toJSON() }, (err: any, res: any) => resolve(err ? { ok: false } : res))
+      );
+      return saved && saved.ok ? 'ok' : 'failed';
     } catch (e) {
       console.warn('Push subscribe failed:', e);
+      return 'failed';
     }
   }, []);
 
   // Called by the UI whenever the chat is opened (true) or closed/hidden (false).
+  //  on       = chat unlocked (this is what "present" means for notifications; a call counts as present)
+  //  onScreen = the messages are actually visible right now (not while only the call video is showing)
   const setChatActive = useCallback(
-    (on: boolean) => {
+    (on: boolean, onScreen: boolean = on) => {
+      const wasActive = chatActiveRef.current;
       chatActiveRef.current = on;
+      chatOnScreenRef.current = onScreen;
       const socket = getSocket();
       if (socket.connected) {
         socket.emit('visibility', { visible: on && document.visibilityState === 'visible' });
-        if (on) socket.emit('sync-pending'); // bring back anything that was wiped or arrived while the chat was closed
+        if (on && !wasActive) socket.emit('sync-pending'); // bring back anything that was wiped or arrived while the chat was closed
       }
-      if (on) flushSeen();
+      if (onScreen) flushSeen();
     },
     [flushSeen]
   );
@@ -707,6 +748,40 @@ export function usePermanentP2P() {
     const perm = await Notification.requestPermission();
     setNotificationState(perm as NotificationState);
     if (perm === 'granted') subscribePush();
+  }, [subscribePush]);
+
+  // Settings → "Send test notification": asks for permission if needed, registers this device, then pushes to it and
+  // tells the person in plain words what happened (so a missing notification can be diagnosed without guessing).
+  const testNotification = useCallback(async () => {
+    if (typeof Notification === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setNotice(
+        /iphone|ipad|ipod/i.test(navigator.userAgent)
+          ? 'On iPhone, notifications only work after you add E-Browser to the Home Screen (Safari → Share → Add to Home Screen) and open it from there.'
+          : 'This browser cannot show notifications.'
+      );
+      return;
+    }
+    let perm = Notification.permission;
+    if (perm === 'default') perm = await Notification.requestPermission();
+    setNotificationState(perm as NotificationState);
+    if (perm === 'denied') {
+      setNotice('Notifications are blocked for this site. Tap the lock icon in the address bar → Notifications → Allow, then try again.');
+      return;
+    }
+    if (perm !== 'granted') return;
+    const sub = await subscribePush();
+    if (sub === 'no-key') return setNotice('The server has no push keys yet (VAPID keys missing on Render).');
+    if (sub !== 'ok') return setNotice('This device could not be registered for notifications. Close and reopen the app, then try again.');
+    const res: any = await new Promise((resolve) =>
+      getSocket().timeout(10000).emit('push-test', {}, (err: any, r: any) => resolve(err ? { ok: false, reason: 'timeout' } : r))
+    );
+    if (!res || !res.ok) {
+      setNotice(res?.reason === 'server-off' ? 'Push is switched off on the server (VAPID keys missing).' : 'Could not reach the server. Try again.');
+    } else if (res.sent > 0) {
+      setNotice(`Test sent to ${res.sent} device${res.sent > 1 ? 's' : ''}. If nothing shows up, check the phone's notification settings for Chrome / E-Browser (and Do Not Disturb).`);
+    } else {
+      setNotice('Server found this device but the push service refused it. Turn notifications off and on again.');
+    }
   }, [subscribePush]);
 
   // 2. Socket + PeerJS lifecycle
@@ -802,6 +877,7 @@ export function usePermanentP2P() {
       callAcceptedRef.current = true;
       const call = peerRef.current.call(target, stream || new MediaStream());
       attachMediaCall(call);
+      armConnectTimeout();
     };
 
     const onCallDeclined = () => {
@@ -1057,7 +1133,8 @@ export function usePermanentP2P() {
     callAcceptedRef.current = true;
     updateCallState('connected'); // shows "Connecting…" until the caller's media arrives
     getSocket().emit('accept-call');
-  }, [initLocalStream, resetCall, updateCallState]);
+    armConnectTimeout();
+  }, [initLocalStream, resetCall, updateCallState, armConnectTimeout]);
 
   const declineCall = useCallback(() => {
     getSocket().emit('decline-call');
@@ -1209,8 +1286,10 @@ export function usePermanentP2P() {
       await uploadWithProgress(info.url, blob, () => {}, mime);
       socket.emit('chat-message', { message: { id: msg.id, timestamp: msg.timestamp, replyTo: msg.replyTo, media: { key: info.key, kind: 'image', mime, size: blob.size } } });
     } catch (e) {
-      console.warn('photo upload failed', e);
-      setNotice('A photo could not be sent. Check your connection and try again.');
+      // Cloud storage unreachable (e.g. CORS not set on the bucket). Photos are already small, so send this one through the
+      // database relay instead: it is stored there until the partner has seen it, exactly like a text message.
+      console.warn('photo upload to cloud failed, using the database relay', e);
+      socket.emit('chat-message', { message: msg });
     }
   }, []);
 
@@ -1450,7 +1529,9 @@ export function usePermanentP2P() {
     reportScreenshot,
     clearChat,
     enableNotifications,
+    testNotification,
     setChatActive,
+    unseenCount,
     dismissNotice: () => setNotice(null),
     showNotice: (m: string) => setNotice(m),
     replyTarget,

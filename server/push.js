@@ -17,14 +17,19 @@ function createPush(db) {
     publicKey: pub || null,
 
     // Payload never contains chat text/photos — only "someone is calling / new message".
+    // Returns { total, sent, failed } so callers (and the logs) can see what really happened.
     async notify(userId, payload) {
-      if (!enabled) return;
+      const result = { total: 0, sent: 0, failed: 0 };
+      if (!enabled) return result;
       const subs = await db.getPushSubscriptions(userId);
+      result.total = subs.length;
       await Promise.all(
         subs.map(async (sub) => {
           try {
             await webpush.sendNotification(sub, JSON.stringify(payload), { TTL: payload.type === 'call' ? 45 : 3600, urgency: 'high' });
+            result.sent += 1;
           } catch (e) {
+            result.failed += 1;
             if (e.statusCode === 404 || e.statusCode === 410) {
               await db.deletePushSubscription(sub.endpoint).catch(() => {});
             } else {
@@ -33,6 +38,7 @@ function createPush(db) {
           }
         })
       );
+      return result;
     },
   };
 }
