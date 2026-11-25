@@ -4,7 +4,7 @@ import { RegisterSW } from '@/components/RegisterSW';
 
 // Everything a bystander (or the OS app switcher / home screen) can see must look like a plain calculator.
 export const metadata: Metadata = {
-  title: 'Web Browser',
+  title: 'E-Browser',
   description: 'A fast and simple web browser',
   manifest: '/manifest.json',
   icons: {
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: 'Browser',
+    title: 'E-Browser',
     statusBarStyle: 'default',
   },
   formatDetection: { telephone: false },

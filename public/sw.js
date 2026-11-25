@@ -16,7 +16,7 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) {}
   const urgent = data.type === 'call';
   event.waitUntil(
-    self.registration.showNotification('Web Browser', {
+    self.registration.showNotification('E-Browser', {
       body: 'New notification',
       icon: '/icon-192.png',
       badge: '/favicon.png',

@@ -1016,7 +1016,7 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
                 <Globe className="w-7 h-7 text-white" />
               </span>
               <div>
-                <p className="text-white font-semibold">Web Browser</p>
+                <p className="text-white font-semibold">E-Browser</p>
                 <p className="text-slate-400 text-xs">Version 1.0</p>
               </div>
             </div>

@@ -1,6 +1,6 @@
 {
-  "name": "Web Browser",
-  "short_name": "Browser",
+  "name": "E-Browser",
+  "short_name": "E-Browser",
   "description": "A fast and simple web browser",
   "start_url": "/",
   "scope": "/",
