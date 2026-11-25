@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import '@/lib/install'; // starts listening for the browser's install event as early as possible
 
 // Keeps the installed app / mobile browser on the latest deploy automatically:
 //  - registers the service worker on every start (not only when push is enabled),

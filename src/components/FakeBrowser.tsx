@@ -33,6 +33,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { loadJSON, saveJSON, clearBrowserData } from '@/lib/browserStore';
+import { useInstall } from '@/lib/install';
 
 /* ───────────────────────────── types ───────────────────────────── */
 
@@ -234,6 +235,9 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
   const [del, setDel] = useState({ history: true, favs: true, links: false, settings: false });
 
   const [settings, setSettings] = usePersisted<Settings>('settings', DEFAULT_SETTINGS);
+  const { canPrompt, standalone, ios, promptInstall } = useInstall();
+  const [installTipHidden, setInstallTipHidden] = usePersisted<boolean>('installTipHidden', false);
+  const [showInstallSteps, setShowInstallSteps] = useState(false);
   const [favs, setFavs] = usePersisted<Fav[]>('favorites', []);
   const [hist, setHist] = usePersisted<Hist[]>('history', []);
   const [links, setLinks] = usePersisted<LinkItem[]>('links', []);
@@ -256,6 +260,16 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2200);
   }, []);
+
+  // Real install popup when the browser offers one; otherwise tell the person where the browser keeps "Install app".
+  const doInstall = useCallback(async () => {
+    const r = await promptInstall();
+    if (r === 'unavailable') {
+      setShowInstallSteps(true);
+      say(ios ? 'Tap Share, then "Add to Home Screen"' : 'Browser menu ⋮ → "Install app" / "Add to Home screen"');
+    }
+    if (r === 'accepted') setInstallTipHidden(true);
+  }, [promptInstall, setInstallTipHidden, say, ios]);
 
   const patchTab = useCallback((id: string, patch: Partial<Tab>) => setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t))), []);
 
@@ -562,6 +576,29 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
                     </span>
                     <span className="text-[11px] drop-shadow">Add</span>
                   </button>
+                </div>
+              )}
+
+              {!standalone && !installTipHidden && (
+                <div className="rounded-2xl bg-black/50 backdrop-blur p-4 mb-3 text-white">
+                  <div className="flex items-start justify-between gap-3 pb-2 mb-2 border-b border-white/15">
+                    <p className="text-[12px] text-white/65">Install</p>
+                    <button onClick={() => setInstallTipHidden(true)} aria-label="Dismiss" className="-mt-1 -mr-1 p-1 text-white/60 active:scale-90">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-[16px] font-semibold">Install E-Browser</p>
+                  <p className="text-[13px] text-white/75 mt-0.5">Add it to your home screen to open it like an app.</p>
+                  <button onClick={doInstall} className="mt-3 h-9 px-5 rounded-full bg-sky-600 text-[14px] font-semibold active:scale-95">
+                    Install
+                  </button>
+                  {showInstallSteps && (
+                    <p className="text-[13px] text-white/80 mt-3 leading-snug">
+                      {ios
+                        ? 'In Safari tap the Share button, then "Add to Home Screen".'
+                        : 'Open the browser menu (⋮) and choose "Install app" or "Add to Home screen".'}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -901,6 +938,11 @@ export const FakeBrowser: React.FC<FakeBrowserProps> = ({ secretCode, onSecret }
                 <MenuItem icon={<Printer className="w-6 h-6" />} label="Print" disabled={onStart} onClick={() => { setSheet(null); setTimeout(() => window.print(), 150); }} />
                 <MenuItem icon={<Info className="w-6 h-6" />} label="About" onClick={() => openSheet('about')} />
               </div>
+              {!standalone && (
+                <div className="grid grid-cols-4">
+                  <MenuItem icon={<Download className="w-6 h-6" />} label="Install app" onClick={() => { setSheet(null); doInstall(); }} />
+                </div>
+              )}
             </div>
           </div>
           <div className="flex justify-center gap-1.5 pt-3 pb-1">
