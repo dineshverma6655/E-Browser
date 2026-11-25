@@ -96,6 +96,17 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
       .catch(() => setStatus(null));
   }, [showSettings]);
 
+  // Notifications are on by default: browsers only allow the permission prompt after a tap, so ask on the first tap
+  // once the chat is open (and again on later visits until the person answers).
+  useEffect(() => {
+    if (!active || notificationState !== 'default') return;
+    const ask = () => {
+      enableNotifications();
+    };
+    document.addEventListener('pointerdown', ask, { once: true });
+    return () => document.removeEventListener('pointerdown', ask);
+  }, [active, notificationState, enableNotifications]);
+
   // Blur + report when someone tries to screenshot while chat or a call is on screen
   useScreenProtection(active && (Boolean(partnerId) || callState !== 'idle'), reportScreenshot);
 

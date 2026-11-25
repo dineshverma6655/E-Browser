@@ -698,7 +698,13 @@ export function usePermanentP2P() {
       updatePartnerOnline(false);
     };
 
+    // Tell the server whether the app is on screen: no notification is sent while it is, one is sent when it is not.
+    const reportVisibility = () => {
+      if (socket.connected) socket.emit('visibility', { visible: document.visibilityState === 'visible' });
+    };
+
     const onRegistered = ({ partnerId: serverPartner, isPartnerOnline: online, inCall }: any) => {
+      reportVisibility();
       // The call may have ended while we were disconnected (we missed the 'call-ended' signal): drop the stale call screen.
       if (!inCall && callStateRef.current !== 'idle') resetCall();
       // Server (Postgres) is the source of truth: if partner unpaired while we were away, this clears it.
@@ -853,12 +859,14 @@ export function usePermanentP2P() {
     socket.on('replaced', onReplaced);
 
     const onVisible = () => {
+      reportVisibility();
       if (document.visibilityState === 'visible') {
         if (!socket.connected) socket.connect();
         flushSeen();
       }
     };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pagehide', reportVisibility);
 
     (async () => {
       try {
@@ -877,6 +885,7 @@ export function usePermanentP2P() {
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pagehide', reportVisibility);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('registered', onRegistered);

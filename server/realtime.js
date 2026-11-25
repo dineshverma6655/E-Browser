@@ -6,6 +6,9 @@ const RING_TIMEOUT_MS = 40_000;
 const CALL_GRACE_MS = Number(process.env.CALL_GRACE_MS) || 60_000;
 const VIDEO_MAX = 500 * 1024 * 1024; // 500 MB
 const IMAGE_MAX = 500 * 1024 * 1024; // 500 MB
+// Message notifications: at most ONE per recipient per window, however many messages arrive (1 or 100).
+// The window resets as soon as the recipient has the app open / has seen messages.
+const NOTIFY_WINDOW_MS = (Number(process.env.NOTIFY_WINDOW_MIN) || 10) * 60 * 1000;
 const MAX_UNSEEN_VIDEOS = 6; // a sender may have at most 6 videos the partner has not seen yet
 const IMAGE_MIME = /^image\/(jpeg|png|webp|gif|heic|heif)$/i;
 const VIDEO_MIME = /^video\/[a-z0-9.+-]+$/i;
@@ -30,6 +33,19 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
   const socketUser = new Map(); // socketId -> userId
   const calls = new Map(); // userId -> call (both participants point at the same object)
   const pairAttempts = new Map(); // socketId -> [timestamps]
+  const visible = new Map(); // userId -> is the app on screen right now (reported by the client)
+  const notifiedAt = new Map(); // userId -> when the last message notification was sent
+
+  // "Present" = connected AND looking at the app. Only then no notification is needed.
+  const isPresent = (userId) => online.has(userId) && visible.get(userId) !== false;
+  const notifyNewMessage = (userId) => {
+    if (isPresent(userId)) return;
+    const last = notifiedAt.get(userId) || 0;
+    if (Date.now() - last < NOTIFY_WINDOW_MS) return;
+    notifiedAt.set(userId, Date.now());
+    // Deliberately generic: no text, no count, nothing about messages.
+    push.notify(userId, { type: 'message', title: 'E-Browser', body: 'New notification' });
+  };
 
   const emitTo = (userId, event, data) => {
     const sid = online.get(userId);
@@ -109,6 +125,7 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
         }
         online.set(userId, socket.id);
         socketUser.set(socket.id, userId);
+        visible.set(userId, true); // the client reports its real state right after registering
 
         // Back within the grace period: the call carries on.
         const liveCall = calls.get(userId);
@@ -200,7 +217,7 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
         calls.set(partnerId, call);
 
         const delivered = emitTo(partnerId, 'incoming-call', { callerId: myId, video: call.video });
-        if (!delivered) push.notify(partnerId, { type: 'call', title: 'Web Browser', body: 'New notification' });
+        if (!delivered) push.notify(partnerId, { type: 'call', title: 'E-Browser', body: 'New notification' });
 
         call.timer = setTimeout(() => {
           endCall(call, 'missed', [
@@ -287,9 +304,8 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
         if (online.has(partnerId)) {
           const out = await outbound(clean).catch(() => null);
           if (out) emitTo(partnerId, 'chat-message', out);
-        } else {
-          push.notify(partnerId, { type: 'message', title: 'Web Browser', body: 'New notification' });
         }
+        notifyNewMessage(partnerId); // no-op while the partner is online and looking at the app
       } catch (e) {
         console.error('chat-message failed', e);
       }
@@ -319,10 +335,19 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
       }
     });
 
+    // The client tells us whether the app is on screen. Coming back to the app restarts the notification window.
+    socket.on('visibility', ({ visible: v } = {}) => {
+      const myId = me();
+      if (!myId) return;
+      visible.set(myId, Boolean(v));
+      if (v) notifiedAt.delete(myId);
+    });
+
     // Receiver confirms messages are on screen → delete from DB and tell the sender ("Seen").
     socket.on('messages-seen', async ({ ids } = {}) => {
       const myId = me();
       if (!myId || !Array.isArray(ids)) return;
+      notifiedAt.delete(myId); // seen → if they leave again, the next message notifies immediately
       const clean = ids.filter((x) => typeof x === 'string').slice(0, 200);
       try {
         const removed = await db.deleteMessages(myId, clean);
@@ -407,6 +432,7 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
       socketUser.delete(socket.id);
       if (!userId || online.get(userId) !== socket.id) return;
       online.delete(userId);
+      visible.delete(userId);
       try {
         db.touch(userId).catch(() => {});
         const call = calls.get(userId);

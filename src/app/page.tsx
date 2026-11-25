@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FakeBrowser } from '@/components/FakeBrowser';
 import { SecretChat } from '@/components/SecretChat';
 
@@ -12,8 +12,35 @@ const SECRET_CODE = process.env.NEXT_PUBLIC_SECRET_CODE || '28112005';
 export default function Shell() {
   const [unlocked, setUnlocked] = useState(false);
 
-  const unlock = useCallback(() => setUnlocked(true), []);
-  const lock = useCallback(() => setUnlocked(false), []);
+  const unlockedRef = useRef(false);
+  unlockedRef.current = unlocked;
+
+  // Opening the chat adds ONE browser-history step (same URL, nothing shows in the address bar), so the Back button /
+  // swipe-back closes the chat and returns to the browser screen instead of leaving the site.
+  const unlock = useCallback(() => {
+    setUnlocked(true);
+    if (!window.history.state?.chat) window.history.pushState({ ...window.history.state, chat: true }, '');
+  }, []);
+
+  // Locking from inside the app (auto-lock etc.) also removes that history step, so Back does not need a second press.
+  const lock = useCallback(() => {
+    setUnlocked(false);
+    if (window.history.state?.chat) window.history.back();
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      const inChat = Boolean(window.history.state?.chat);
+      if (inChat && !unlockedRef.current) {
+        // "Forward" must never re-open the chat without the code.
+        window.history.back();
+        return;
+      }
+      if (!inChat) setUnlocked(false);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   // Status-bar colour matches whichever screen is showing
   useEffect(() => {
