@@ -32,12 +32,30 @@ import {
   Camera,
 } from 'lucide-react';
 
+// "just now" / "5 min ago" / "2 h ago" / "yesterday 9:40 PM" / "12 Nov, 9:40 PM"
+function formatLastSeen(ts: number, now: number): string {
+  const diff = Math.max(0, now - ts);
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hours = Math.floor(min / 60);
+  if (hours < 6) return `${hours} h ago`;
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const today = new Date(now);
+  const yesterday = new Date(now - 86400000);
+  if (d.toDateString() === today.toDateString()) return `today ${time}`;
+  if (d.toDateString() === yesterday.toDateString()) return `yesterday ${time}`;
+  return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
+}
+
 export function SecretChat({ active, onLock }: { active: boolean; onLock: () => void }) {
   const {
     isReady,
     myId,
     partnerId,
     isPartnerOnline,
+    partnerLastSeen,
     callState,
     isVideoCall,
     callDuration,
@@ -61,6 +79,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
     callHistory,
     notificationState,
     enableNotifications,
+    setChatActive,
     pairWithPartner,
     unpair,
     startCall,
@@ -85,6 +104,12 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   const [showSettings, setShowSettings] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
+  // Re-render every 30 s so "Last seen 5 min ago" stays current
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
   const [status, setStatus] = useState<{ database: boolean; cloud: { configured: boolean; ok: boolean; error: string | null }; push: boolean } | null>(null);
 
   useEffect(() => {
@@ -96,6 +121,11 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
       .catch(() => setStatus(null));
   }, [showSettings]);
 
+  // Tell the hook when the chat is really open: "seen" only counts then, and the server re-sends anything still unseen.
+  useEffect(() => {
+    setChatActive(active);
+  }, [active, setChatActive]);
+
   // Notifications are on by default: browsers only allow the permission prompt after a tap, so ask on the first tap
   // once the chat is open (and again on later visits until the person answers).
   useEffect(() => {
@@ -103,8 +133,9 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
     const ask = () => {
       enableNotifications();
     };
-    document.addEventListener('pointerdown', ask, { once: true });
-    return () => document.removeEventListener('pointerdown', ask);
+    // `click` (not pointerdown): on phones the browser only counts a finished tap as a real user gesture.
+    document.addEventListener('click', ask, { once: true });
+    return () => document.removeEventListener('click', ask);
   }, [active, notificationState, enableNotifications]);
 
   // Blur + report when someone tries to screenshot while chat or a call is on screen
@@ -268,6 +299,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           {remoteStream && callState === 'connected' ? (
             <VideoPlayer
               silent
+              fit="contain"
               stream={remoteStream}
               userName="Partner"
               isMuted={!partnerMediaStatus.audio}
@@ -516,7 +548,13 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           <div className="min-w-0 leading-tight">
             <p className="text-sm font-bold font-mono tracking-wide truncate">{partnerId}</p>
             <p className={`text-[11px] ${isPartnerOnline ? 'text-emerald-400' : 'text-slate-500'}`}>
-              {!socketConnected ? 'Connecting…' : isPartnerOnline ? 'Online' : 'Offline'}
+              {!socketConnected
+                ? 'Connecting…'
+                : isPartnerOnline
+                  ? 'Online'
+                  : partnerLastSeen
+                    ? `Last seen ${formatLastSeen(partnerLastSeen, nowTick)}`
+                    : 'Offline'}
             </p>
           </div>
         </div>

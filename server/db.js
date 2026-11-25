@@ -100,6 +100,12 @@ function createDb(pool = createPool()) {
       await q('UPDATE users SET last_seen = now() WHERE id = $1', [userId]);
     },
 
+    // When this user was last connected (ms since epoch), or null.
+    async getLastSeen(userId) {
+      const { rows } = await q('SELECT last_seen FROM users WHERE id = $1', [userId]);
+      return rows[0] ? new Date(rows[0].last_seen).getTime() : null;
+    },
+
     async userExists(userId) {
       const { rows } = await q('SELECT 1 FROM users WHERE id = $1', [userId]);
       return rows.length > 0;

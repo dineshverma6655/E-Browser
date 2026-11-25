@@ -399,8 +399,15 @@ export const ChatSheet: React.FC<ChatSheetProps> = ({
     const seen = msg.status === 'seen';
     const offline = !connected || !partnerOnline;
     const color = seen ? 'bg-emerald-400' : offline ? 'bg-rose-500' : 'bg-sky-400';
-    const label = seen ? 'Seen' : offline ? 'Partner offline - not delivered yet' : 'Delivered - partner online';
-    return <span title={label} aria-label={label} className={`inline-block w-2 h-2 rounded-full ml-1.5 align-middle ${color}`} />;
+    const label = seen ? 'Seen' : offline ? 'Waiting - partner is offline' : 'Sent - not seen yet';
+    const word = seen ? 'Seen' : offline ? 'Waiting' : 'Sent';
+    const wordColor = seen ? 'text-emerald-300' : offline ? 'text-rose-300' : 'text-sky-200';
+    return (
+      <span title={label} aria-label={label} className="inline-flex items-center align-middle ml-1.5">
+        <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
+        <span className={`ml-1 text-[10px] leading-none ${wordColor}`}>{word}</span>
+      </span>
+    );
   };
 
   const rowStyle = (msg: ChatMessage): React.CSSProperties =>

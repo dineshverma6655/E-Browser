@@ -14,6 +14,8 @@ interface VideoPlayerProps {
   compact?: boolean;
   /** do not play this stream's audio from the <video> (a separate <audio> element plays it) */
   silent?: boolean;
+  /** 'cover' fills the box (crops the edges); 'contain' shows the WHOLE picture (nothing cut off) */
+  fit?: 'cover' | 'contain';
   className?: string;
 }
 
@@ -26,6 +28,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isSelf = false,
   compact = false,
   silent = false,
+  fit = 'cover',
   className = '',
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -47,7 +50,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         autoPlay
         playsInline
         muted={isSelf || silent} // Always mute local video to avoid acoustic feedback
-        className={`w-full h-full object-cover transition-opacity duration-300 ${
+        className={`w-full h-full ${fit === 'contain' ? 'object-contain' : 'object-cover'} transition-opacity duration-300 ${
           isMirrored ? 'scale-x-[-1]' : ''
         } ${showVideoPlaceholder ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
       />

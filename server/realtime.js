@@ -65,6 +65,15 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
     return { id: p.id, timestamp: p.timestamp, replyTo: p.replyTo, media: { kind: p.media.kind, mime: p.media.mime, size: p.media.size, url } };
   };
 
+  // Send every message this user has not SEEN yet. Used on connect and whenever the client opens the chat again.
+  const redeliver = async (userId, socket) => {
+    const queued = await db.peekMessages(userId, MSG_TTL_MS);
+    for (const m of queued) {
+      const out = await outbound(m).catch(() => null);
+      if (out) socket.emit('chat-message', out);
+    }
+  };
+
   const rateLimited = (socketId) => {
     const now = Date.now();
     const list = (pairAttempts.get(socketId) || []).filter((t) => now - t < 60_000);
@@ -138,14 +147,11 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
         const partnerOnline = Boolean(partnerId && online.has(partnerId));
         if (partnerOnline) emitTo(partnerId, 'partner-status', { partnerId: userId, online: true });
 
-        socket.emit('registered', { userId, partnerId, isPartnerOnline: partnerOnline, isNew: auth === 'created', inCall: calls.has(userId) });
+        const partnerLastSeen = partnerId && !partnerOnline ? await db.getLastSeen(partnerId).catch(() => null) : null;
+        socket.emit('registered', { userId, partnerId, isPartnerOnline: partnerOnline, partnerLastSeen, isNew: auth === 'created', inCall: calls.has(userId) });
 
         // Re-deliver everything not yet SEEN. Rows are deleted only when the client confirms (messages-seen).
-        const queued = await db.peekMessages(userId, MSG_TTL_MS);
-        for (const m of queued) {
-          const out = await outbound(m).catch(() => null);
-          if (out) socket.emit('chat-message', out);
-        }
+        await redeliver(userId, socket);
 
         // A call that is still ringing for me
         const call = calls.get(userId);
@@ -178,7 +184,9 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
           }[res.reason];
           return socket.emit('pair-error', { message: msg || 'Pairing fail ho gayi.' });
         }
-        socket.emit('pair-success', { partnerId: target, isPartnerOnline: online.has(target) });
+        const targetOnline = online.has(target);
+        const targetLastSeen = targetOnline ? null : await db.getLastSeen(target).catch(() => null);
+        socket.emit('pair-success', { partnerId: target, isPartnerOnline: targetOnline, partnerLastSeen: targetLastSeen });
         emitTo(target, 'pair-success', { partnerId: myId, isPartnerOnline: true });
       } catch (e) {
         console.error('pair failed', e);
@@ -335,6 +343,17 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
       }
     });
 
+    // The chat was opened again (it is wiped from memory whenever it is closed): send everything still unseen.
+    socket.on('sync-pending', async () => {
+      const myId = me();
+      if (!myId) return;
+      try {
+        await redeliver(myId, socket);
+      } catch (e) {
+        console.error('sync-pending failed', e);
+      }
+    });
+
     // The client tells us whether the app is on screen. Coming back to the app restarts the notification window.
     socket.on('visibility', ({ visible: v } = {}) => {
       const myId = me();
@@ -450,7 +469,7 @@ function attachRealtime(io, db, push, media = { enabled: false }) {
           }
         }
         const partnerId = await db.getPartner(userId);
-        if (partnerId) emitTo(partnerId, 'partner-status', { partnerId: userId, online: false });
+        if (partnerId) emitTo(partnerId, 'partner-status', { partnerId: userId, online: false, lastSeen: Date.now() });
       } catch (e) {
         console.error('disconnect cleanup failed', e);
       }

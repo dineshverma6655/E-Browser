@@ -6,6 +6,17 @@ import { getSocket } from '@/lib/socket';
 import { backendUrl, peerEndpoint } from '@/lib/backend';
 import { ChatMessage, PeerMediaStatus, CallLogEntry, ReplyRef } from '@/types';
 
+// Camera request. Phone sensors are 4:3. Asking for 9:16 (720x1280) makes the browser CROP the sensor, which is why faces
+// looked zoomed in. Ask for the sensor's own 3:4 (portrait) / 4:3 (landscape) shape instead = full field of view.
+function cameraConstraints(front: boolean): MediaTrackConstraints {
+  const portrait = typeof window === 'undefined' ? true : window.innerHeight >= window.innerWidth;
+  return {
+    facingMode: front ? 'user' : 'environment',
+    width: { ideal: portrait ? 720 : 960 },
+    height: { ideal: portrait ? 960 : 720 },
+  };
+}
+
 type CallState = 'idle' | 'calling' | 'incoming' | 'connected';
 type NotificationState = 'unsupported' | 'default' | 'granted' | 'denied';
 
@@ -104,6 +115,7 @@ export function usePermanentP2P() {
   const [myId, setMyId] = useState<string>('');
   const [partnerId, setPartnerId] = useState<string | null>(null);
   const [isPartnerOnline, setIsPartnerOnline] = useState<boolean>(false);
+  const [partnerLastSeen, setPartnerLastSeen] = useState<number | null>(null); // ms; only meaningful while the partner is offline
   const [isReady, setIsReady] = useState<boolean>(false);
   const [socketConnected, setSocketConnected] = useState<boolean>(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -148,6 +160,7 @@ export function usePermanentP2P() {
   const knownIdsRef = useRef<Set<string>>(new Set()); // message ids already on screen (avoids duplicates P2P + cloud)
   const unseenRef = useRef<Set<string>>(new Set()); // partner messages on screen but not yet confirmed as seen
   const seenIdsRef = useRef<Set<string>>(new Set()); // my messages the partner has seen
+  const chatActiveRef = useRef(false); // the chat is open (unlocked) — only then can anything count as SEEN
   const isFrontRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -200,6 +213,8 @@ export function usePermanentP2P() {
       knownIdsRef.current.clear();
       return [];
     });
+    // Whatever was not seen before the chat was wiped stays on the server and comes back when the chat is opened again.
+    unseenRef.current.clear();
   }, []);
 
   const updateMsg = useCallback((id: string, patch: Partial<ChatMessage>) => {
@@ -244,6 +259,7 @@ export function usePermanentP2P() {
   // Tell the server (→ deletes from DB) and the sender that these messages were actually seen. Only while the app is visible.
   const flushSeen = useCallback(() => {
     if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+    if (!chatActiveRef.current) return; // a message only counts as seen while it is really on screen in the open chat
     if (unseenRef.current.size === 0) return;
     const ids = Array.from(unseenRef.current);
     unseenRef.current.clear();
@@ -410,7 +426,7 @@ export function usePermanentP2P() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: { facingMode: facing ? 'user' : 'environment', width: { ideal: 720 }, height: { ideal: 1280 } },
+        video: cameraConstraints(facing),
       });
       hasRealVideoRef.current = true;
       localStreamRef.current = stream;
@@ -672,6 +688,20 @@ export function usePermanentP2P() {
     }
   }, []);
 
+  // Called by the UI whenever the chat is opened (true) or closed/hidden (false).
+  const setChatActive = useCallback(
+    (on: boolean) => {
+      chatActiveRef.current = on;
+      const socket = getSocket();
+      if (socket.connected) {
+        socket.emit('visibility', { visible: on && document.visibilityState === 'visible' });
+        if (on) socket.emit('sync-pending'); // bring back anything that was wiped or arrived while the chat was closed
+      }
+      if (on) flushSeen();
+    },
+    [flushSeen]
+  );
+
   const enableNotifications = useCallback(async () => {
     if (typeof Notification === 'undefined') return;
     const perm = await Notification.requestPermission();
@@ -700,11 +730,13 @@ export function usePermanentP2P() {
 
     // Tell the server whether the app is on screen: no notification is sent while it is, one is sent when it is not.
     const reportVisibility = () => {
-      if (socket.connected) socket.emit('visibility', { visible: document.visibilityState === 'visible' });
+      // "Present" for notification purposes = the chat is open AND on screen.
+      if (socket.connected) socket.emit('visibility', { visible: document.visibilityState === 'visible' && chatActiveRef.current });
     };
 
-    const onRegistered = ({ partnerId: serverPartner, isPartnerOnline: online, inCall }: any) => {
+    const onRegistered = ({ partnerId: serverPartner, isPartnerOnline: online, partnerLastSeen: seenAt, inCall }: any) => {
       reportVisibility();
+      setPartnerLastSeen(typeof seenAt === 'number' ? seenAt : null);
       // The call may have ended while we were disconnected (we missed the 'call-ended' signal): drop the stale call screen.
       if (!inCall && callStateRef.current !== 'idle') resetCall();
       // Server (Postgres) is the source of truth: if partner unpaired while we were away, this clears it.
@@ -727,7 +759,8 @@ export function usePermanentP2P() {
       }
     };
 
-    const onPartnerStatus = ({ online }: any) => {
+    const onPartnerStatus = ({ online, lastSeen }: any) => {
+      if (!online) setPartnerLastSeen(typeof lastSeen === 'number' ? lastSeen : Date.now());
       updatePartnerOnline(Boolean(online));
       if (online) connectToPartner();
       else if (callStateRef.current !== 'idle' && callStateRef.current !== 'incoming') {
@@ -735,7 +768,8 @@ export function usePermanentP2P() {
       }
     };
 
-    const onPairSuccess = ({ partnerId: p, isPartnerOnline: online }: any) => {
+    const onPairSuccess = ({ partnerId: p, isPartnerOnline: online, partnerLastSeen: seenAt }: any) => {
+      setPartnerLastSeen(typeof seenAt === 'number' ? seenAt : null);
       updatePartner(p);
       updatePartnerOnline(Boolean(online));
       setNotice(null);
@@ -1047,7 +1081,7 @@ export function usePermanentP2P() {
     const nextFacing = !isFrontRef.current;
     try {
       const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: nextFacing ? 'user' : 'environment', width: { ideal: 720 }, height: { ideal: 1280 } },
+        video: cameraConstraints(nextFacing),
       });
       const newTrack = newStream.getVideoTracks()[0];
       const local = localStreamRef.current;
@@ -1091,7 +1125,7 @@ export function usePermanentP2P() {
     if (!hasRealVideoRef.current) {
       try {
         const cam = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: isFrontRef.current ? 'user' : 'environment', width: { ideal: 720 }, height: { ideal: 1280 } },
+          video: cameraConstraints(isFrontRef.current),
         });
         const track = cam.getVideoTracks()[0];
         const old = local.getVideoTracks()[0];
@@ -1386,6 +1420,7 @@ export function usePermanentP2P() {
     myId,
     partnerId,
     isPartnerOnline,
+    partnerLastSeen,
     socketConnected,
     notice,
     callHistory,
@@ -1415,6 +1450,7 @@ export function usePermanentP2P() {
     reportScreenshot,
     clearChat,
     enableNotifications,
+    setChatActive,
     dismissNotice: () => setNotice(null),
     showNotice: (m: string) => setNotice(m),
     replyTarget,
