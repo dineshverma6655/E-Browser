@@ -106,6 +106,11 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isPipSmall, setIsPipSmall] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  // Voice call starts at the ear (earpiece); video call starts on the loudspeaker. The button switches it any time.
+  const [speakerOn, setSpeakerOn] = useState(true);
+  useEffect(() => {
+    if (callState === 'calling' || callState === 'incoming') setSpeakerOn(isVideoCall);
+  }, [callState, isVideoCall]);
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
   const [chatTheme, setChatTheme] = useChatTheme(); // 'light' (warm white) or 'dark' (black)
@@ -309,7 +314,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           </button>
         </div>
 
-        <RemoteAudio stream={remoteStream} />
+        <RemoteAudio stream={remoteStream} speakerOn={speakerOn} />
 
         {/* Video Canvas */}
         <div className="relative flex-1 min-h-0 w-full bg-slate-950 flex items-center justify-center overflow-hidden">
@@ -371,6 +376,8 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           onToggleChat={() => setIsChatOpen((p) => !p)}
           isChatOpen={isChatOpen}
           unreadCount={unseenCount}
+          isSpeakerOn={speakerOn}
+          onToggleSpeaker={() => setSpeakerOn((v) => !v)}
         />
 
         {/* Sliding P2P Chat (Snapchat Style) */}

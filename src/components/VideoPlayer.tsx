@@ -107,7 +107,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
  * Plays the partner's audio through a dedicated <audio> element. Audio elements keep playing when the screen locks or the
  * app goes to the background (a <video> element is often paused by the browser), so calls stay audible.
  */
-export const RemoteAudio: React.FC<{ stream: MediaStream | null }> = ({ stream }) => {
+export const RemoteAudio: React.FC<{ stream: MediaStream | null; speakerOn?: boolean }> = ({ stream, speakerOn = true }) => {
   const ref = useRef<HTMLAudioElement>(null);
   useEffect(() => {
     if (ref.current && stream) {
@@ -115,5 +115,34 @@ export const RemoteAudio: React.FC<{ stream: MediaStream | null }> = ({ stream }
       ref.current.play().catch(() => {});
     }
   }, [stream]);
+
+  // Earpiece (held to the ear) vs loudspeaker. Browsers have no single standard for this, so try each route that exists.
+  useEffect(() => {
+    // iOS Safari / newer browsers: 'play-and-record' uses the earpiece, 'playback' uses the loudspeaker
+    try {
+      const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+      if (session) session.type = speakerOn ? 'playback' : 'play-and-record';
+    } catch {}
+
+    // Chrome/Android (and desktop): pick the matching output device when the browser lists one
+    const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (!el || typeof el.setSinkId !== 'function' || !navigator.mediaDevices?.enumerateDevices) return;
+    let cancelled = false;
+    navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        if (cancelled) return;
+        const outs = devices.filter((d) => d.kind === 'audiooutput');
+        const earpiece = outs.find((d) => /earpiece|receiver|handset|phone/i.test(d.label));
+        const speaker = outs.find((d) => /speaker/i.test(d.label) && !/earpiece|receiver|handset/i.test(d.label));
+        const target = speakerOn ? speaker?.deviceId ?? 'default' : earpiece?.deviceId;
+        if (target !== undefined) el.setSinkId!(target).catch(() => {});
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [speakerOn, stream]);
+
   return <audio ref={ref} autoPlay playsInline className="hidden" />;
 };
