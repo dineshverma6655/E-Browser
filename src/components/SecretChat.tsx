@@ -29,6 +29,8 @@ import {
   PhoneMissed,
   PhoneOutgoing,
   Phone,
+  Volume2,
+  Ear,
   Settings,
   Camera,
 } from 'lucide-react';
@@ -108,6 +110,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
   const [showSettings, setShowSettings] = useState(false);
   // Voice call starts at the ear (earpiece); video call starts on the loudspeaker. The button switches it any time.
   const [speakerOn, setSpeakerOn] = useState(true);
+  const [audioRoute, setAudioRoute] = useState<'ok' | 'unsupported'>('ok'); // can this phone's browser switch the output at all?
   useEffect(() => {
     if (callState === 'calling' || callState === 'incoming') setSpeakerOn(isVideoCall);
   }, [callState, isVideoCall]);
@@ -314,7 +317,7 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           </button>
         </div>
 
-        <RemoteAudio stream={remoteStream} speakerOn={speakerOn} />
+        <RemoteAudio stream={remoteStream} speakerOn={speakerOn} onRoute={setAudioRoute} />
 
         {/* Video Canvas */}
         <div className="relative flex-1 min-h-0 w-full bg-slate-950 flex items-center justify-center overflow-hidden">
@@ -342,6 +345,35 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
               </p>
             </div>
           )}
+
+          {/* Sound output: loudspeaker (hands-free) or earpiece (hold the phone to your ear) */}
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 w-[90%] max-w-xs">
+            <div role="radiogroup" aria-label="Sound output" className="flex w-full rounded-full bg-black/65 border border-white/15 backdrop-blur-md p-1">
+              {[
+                { on: true, label: 'Speaker', Icon: Volume2 },
+                { on: false, label: 'Earpiece', Icon: Ear },
+              ].map(({ on, label, Icon }) => (
+                <button
+                  key={label}
+                  type="button"
+                  role="radio"
+                  aria-checked={speakerOn === on}
+                  onClick={() => setSpeakerOn(on)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-colors active:scale-95 ${
+                    speakerOn === on ? 'bg-indigo-600 text-white shadow' : 'text-slate-300'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {!speakerOn && audioRoute === 'unsupported' && (
+              <p className="text-[11px] text-amber-300 text-center bg-black/60 rounded-lg px-2 py-1">
+                Is phone ka browser earpiece par switch nahi karne deta. Awaaz speaker se hi aayegi: volume kam rakhein ya headphone lagayein.
+              </p>
+            )}
+          </div>
 
           {/* Self Camera Picture-in-Picture (PIP) */}
           <div
@@ -376,8 +408,6 @@ export function SecretChat({ active, onLock }: { active: boolean; onLock: () => 
           onToggleChat={() => setIsChatOpen((p) => !p)}
           isChatOpen={isChatOpen}
           unreadCount={unseenCount}
-          isSpeakerOn={speakerOn}
-          onToggleSpeaker={() => setSpeakerOn((v) => !v)}
         />
 
         {/* Sliding P2P Chat (Snapchat Style) */}

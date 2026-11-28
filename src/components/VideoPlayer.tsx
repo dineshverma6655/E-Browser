@@ -107,7 +107,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
  * Plays the partner's audio through a dedicated <audio> element. Audio elements keep playing when the screen locks or the
  * app goes to the background (a <video> element is often paused by the browser), so calls stay audible.
  */
-export const RemoteAudio: React.FC<{ stream: MediaStream | null; speakerOn?: boolean }> = ({ stream, speakerOn = true }) => {
+export const RemoteAudio: React.FC<{
+  stream: MediaStream | null;
+  speakerOn?: boolean;
+  /** Reports whether this phone/browser really switched the output ('ok') or has no way to do it ('unsupported'). */
+  onRoute?: (result: 'ok' | 'unsupported') => void;
+}> = ({ stream, speakerOn = true, onRoute }) => {
   const ref = useRef<HTMLAudioElement>(null);
   useEffect(() => {
     if (ref.current && stream) {
@@ -118,30 +123,52 @@ export const RemoteAudio: React.FC<{ stream: MediaStream | null; speakerOn?: boo
 
   // Earpiece (held to the ear) vs loudspeaker. Browsers have no single standard for this, so try each route that exists.
   useEffect(() => {
-    // iOS Safari / newer browsers: 'play-and-record' uses the earpiece, 'playback' uses the loudspeaker
+    let cancelled = false;
+    const report = (r: 'ok' | 'unsupported') => {
+      if (!cancelled) onRoute?.(r);
+    };
+
+    // iOS Safari: 'play-and-record' sends the call audio to the earpiece; 'auto' is the normal loudspeaker route.
+    // ('playback' is not used: it can switch the microphone off while a call is running.)
+    let handled = false;
     try {
       const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
-      if (session) session.type = speakerOn ? 'playback' : 'play-and-record';
+      if (session) {
+        session.type = speakerOn ? 'auto' : 'play-and-record';
+        handled = true;
+      }
     } catch {}
 
-    // Chrome/Android (and desktop): pick the matching output device when the browser lists one
+    // Chrome / Android: pick the matching output device when the browser lists one
     const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
-    if (!el || typeof el.setSinkId !== 'function' || !navigator.mediaDevices?.enumerateDevices) return;
-    let cancelled = false;
+    if (!el || typeof el.setSinkId !== 'function' || !navigator.mediaDevices?.enumerateDevices) {
+      report(handled ? 'ok' : 'unsupported');
+      return () => {
+        cancelled = true;
+      };
+    }
     navigator.mediaDevices
       .enumerateDevices()
-      .then((devices) => {
+      .then(async (devices) => {
         if (cancelled) return;
         const outs = devices.filter((d) => d.kind === 'audiooutput');
-        const earpiece = outs.find((d) => /earpiece|receiver|handset|phone/i.test(d.label));
+        // NB: "Speakerphone" contains "phone", so the earpiece must be matched by its own words only.
+        const earpiece = outs.find((d) => /earpiece|receiver|handset/i.test(d.label) && !/speaker/i.test(d.label));
         const speaker = outs.find((d) => /speaker/i.test(d.label) && !/earpiece|receiver|handset/i.test(d.label));
         const target = speakerOn ? speaker?.deviceId ?? 'default' : earpiece?.deviceId;
-        if (target !== undefined) el.setSinkId!(target).catch(() => {});
+        if (target === undefined) return report(handled ? 'ok' : 'unsupported');
+        try {
+          await el.setSinkId!(target);
+          report('ok');
+        } catch {
+          report(handled ? 'ok' : 'unsupported');
+        }
       })
-      .catch(() => {});
+      .catch(() => report(handled ? 'ok' : 'unsupported'));
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speakerOn, stream]);
 
   return <audio ref={ref} autoPlay playsInline className="hidden" />;

@@ -9,8 +9,6 @@ import {
   PhoneOff,
   SwitchCamera,
   MessageSquare,
-  Volume2,
-  Phone,
 } from 'lucide-react';
 
 interface CallControlsProps {
@@ -23,8 +21,6 @@ interface CallControlsProps {
   onToggleChat: () => void;
   isChatOpen: boolean;
   unreadCount?: number;
-  isSpeakerOn: boolean;
-  onToggleSpeaker: () => void;
 }
 
 export const CallControls: React.FC<CallControlsProps> = ({
@@ -37,8 +33,6 @@ export const CallControls: React.FC<CallControlsProps> = ({
   onToggleChat,
   isChatOpen,
   unreadCount = 0,
-  isSpeakerOn,
-  onToggleSpeaker,
 }) => {
   return (
     <div className="px-4 py-3 pb-6 bg-gradient-to-t from-black via-black/80 to-transparent flex items-center justify-between gap-2 max-w-md w-full mx-auto select-none safe-bottom">
@@ -66,20 +60,6 @@ export const CallControls: React.FC<CallControlsProps> = ({
         }`}
       >
         {isVideoMuted ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-      </button>
-
-      {/* Speaker (loud) / Earpiece (hold to ear) */}
-      <button
-        onClick={onToggleSpeaker}
-        aria-label={isSpeakerOn ? 'Switch to earpiece' : 'Switch to speaker'}
-        title={isSpeakerOn ? 'Speaker on' : 'Earpiece'}
-        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 shadow-lg ${
-          isSpeakerOn
-            ? 'bg-indigo-600 text-white'
-            : 'bg-slate-800/80 text-white hover:bg-slate-700/80 border border-slate-700/40 backdrop-blur-md'
-        }`}
-      >
-        {isSpeakerOn ? <Volume2 className="w-5 h-5" /> : <Phone className="w-5 h-5" />}
       </button>
 
       {/* Flip Front / Back Camera (Mobile Feature) */}
