@@ -42,12 +42,26 @@ Next.js aur PeerJS par bana **Ultra-Private 1-on-1 Mobile App**. Isme koi databa
 
 Chat history kabhi DB me save nahi hoti. Tables Prisma migrations se banti hain (`prisma/schema.prisma`).
 
-## 🚀 Chalane Ka Tarika
+## 🚀 Vercel par deploy (Render ki zaroorat nahi)
 
-1. `.env` me `DATABASE_URL=postgresql://user:pass@host:5432/dbname` daalein (cloud DB ho to `DATABASE_SSL=true`).
-2. `npm run db:deploy` (tables banata hai, Supabase me RLS bhi on karta hai)
-3. `npm run vapid` → output `.env` me paste karein (push notifications ke liye).
-4. `npm run dev` → `http://localhost:3000`
+Poora app (pages + API) ek hi Vercel project me chalta hai. Koi alag backend server nahi hai.
+
+1. Supabase me tables banayein (ek baar, apne computer se): `.env` me `DATABASE_URL` rakhein, phir `npm run db:deploy`.
+2. https://pusher.com par free **Channels** app banayein (realtime ke liye). Cluster yaad rakhein.
+3. Vercel > Project > Settings > Environment Variables me `env.txt` ke saare variable paste karein
+   (`PUSHER_APP_ID`, `PUSHER_SECRET`, `NEXT_PUBLIC_PUSHER_KEY`, `NEXT_PUBLIC_PUSHER_CLUSTER` bhi bharein).
+4. Redeploy. Settings panel me Database / Cloud / Push / Realtime sab "OK" dikhna chahiye.
+
+Tips:
+- `DATABASE_URL` me Supabase ka **Transaction pooler** (port `6543`) use karein: serverless me connections jaldi khatam hote hain.
+- `NEXT_PUBLIC_*` variables badalne ke baad Vercel me **redeploy** zaroori hai.
+- Pusher keys na hon to app phir bhi chalta hai, bas calls/messages 5 second tak late aate hain.
+- Call signaling free PeerJS Cloud se hoti hai; video/audio/data direct peer-to-peer rehta hai.
+
+## 💻 Local
+
+1. `.env` banayein (`.env.example` dekhein), `npm run db:deploy`, `npm run vapid`.
+2. `npm run dev` -> http://localhost:3000
 
 Mobile data / strict NAT par call ke liye TURN server (`TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL`) lagana padega. Mic/camera/push ke liye production me **HTTPS** zaroori hai.
 

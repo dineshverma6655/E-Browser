@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { DataConnection, MediaConnection } from 'peerjs';
 import { getSocket } from '@/lib/socket';
-import { backendUrl, peerEndpoint } from '@/lib/backend';
+import { backendUrl } from '@/lib/backend';
 import { ChatMessage, PeerMediaStatus, CallLogEntry, ReplyRef } from '@/types';
 
 // Camera request. Phone sensors are 4:3. Asking for 9:16 (720x1280) makes the browser CROP the sensor, which is why faces
@@ -664,15 +664,9 @@ export function usePermanentP2P() {
       if (peerRef.current) return peerRef.current;
       try {
         const { default: Peer } = await import('peerjs');
-        const ep = peerEndpoint();
-
-        const peer = new Peer(currentMyId, {
-          host: ep.host,
-          port: ep.port,
-          path: '/peerjs',
-          secure: ep.secure,
-          config: { iceServers: iceRef.current },
-        });
+        // Signaling goes through the free public PeerJS Cloud (there is no server of our own any more); the media and the
+        // data channel are still direct peer-to-peer.
+        const peer = new Peer(currentMyId, { config: { iceServers: iceRef.current } });
         peerRef.current = peer;
 
         peer.on('open', () => {
@@ -825,7 +819,7 @@ export function usePermanentP2P() {
     }
     if (perm !== 'granted') return;
     const sub = await subscribePush();
-    if (sub === 'no-key') return setNotice('The server has no push keys yet (VAPID keys missing on Render).');
+    if (sub === 'no-key') return setNotice('The server has no push keys yet (VAPID keys missing in the Vercel environment variables).');
     if (sub !== 'ok') return setNotice('This device could not be registered for notifications. Close and reopen the app, then try again.');
     // The service worker tells the page when the push really arrived on this device.
     const arrived = new Promise<boolean>((resolve) => {

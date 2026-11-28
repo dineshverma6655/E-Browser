@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON push_subscriptions(user_id);
 `;
 
+// A user counts as online while their last heartbeat is younger than this.
+const ONLINE_WINDOW_S = 45;
+
 const hash = (secret) => crypto.createHash('sha256').update(String(secret)).digest('hex');
 
 function safeEqual(a, b) {
@@ -57,10 +60,13 @@ function createPool() {
     );
   }
   const useSsl = process.env.DATABASE_SSL === 'true';
+  // Serverless: every function instance keeps only a couple of connections (the pooler hands them out).
   return new Pool({
     connectionString: url,
     ssl: useSsl ? { rejectUnauthorized: false } : undefined,
-    max: 10,
+    max: Number(process.env.DB_POOL_MAX) || 3,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 8_000,
   });
 }
 
@@ -98,6 +104,81 @@ function createDb(pool = createPool()) {
 
     async touch(userId) {
       await q('UPDATE users SET last_seen = now() WHERE id = $1', [userId]);
+    },
+
+    // ---- presence (heartbeat based; there are no long-lived sockets on Vercel) ----
+    // The stored credentials of a user (no side effects): { secret_hash, session_id } or null.
+    async getAuth(userId) {
+      const { rows } = await q('SELECT secret_hash, session_id FROM users WHERE id = $1', [userId]);
+      return rows[0] || null;
+    },
+
+    // { sessionId } when userId + secret match, otherwise null.
+    async verify(userId, secret) {
+      const row = await this.getAuth(userId);
+      if (!row || typeof secret !== 'string' || !safeEqual(row.secret_hash, hash(secret))) return null;
+      return { sessionId: row.session_id };
+    },
+
+    // A device (session) took over this account. Returns the previous { sessionId, online }.
+    async startSession(userId, sessionId) {
+      const before = await q(
+        'SELECT session_id, (online_at > now() - make_interval(secs => $2) AND NOT offline) AS online FROM users WHERE id = $1',
+        [userId, ONLINE_WINDOW_S]
+      );
+      await q('UPDATE users SET session_id = $2, online_at = now(), offline = false, visible = true, last_seen = now() WHERE id = $1', [userId, sessionId]);
+      const r = before.rows[0] || {};
+      return { sessionId: r.session_id || null, online: Boolean(r.online) };
+    },
+
+    // Returns true if the user was already online before this beat (false = they just came back).
+    async heartbeat(userId) {
+      const before = await q('SELECT (online_at > now() - make_interval(secs => $2) AND NOT offline) AS online FROM users WHERE id = $1', [userId, ONLINE_WINDOW_S]);
+      await q('UPDATE users SET online_at = now(), offline = false, last_seen = now() WHERE id = $1', [userId]);
+      return Boolean(before.rows[0] && before.rows[0].online);
+    },
+
+    async markOffline(userId) {
+      await q('UPDATE users SET offline = true, last_seen = now() WHERE id = $1', [userId]);
+    },
+
+    // { online, lastSeen (ms), visible } for any user, or null.
+    async getPresence(userId) {
+      const { rows } = await q(
+        `SELECT (online_at > now() - make_interval(secs => $2) AND NOT offline) AS online, GREATEST(last_seen, online_at) AS seen, visible
+         FROM users WHERE id = $1`,
+        [userId, ONLINE_WINDOW_S]
+      );
+      if (!rows[0]) return null;
+      return { online: Boolean(rows[0].online), lastSeen: rows[0].seen ? new Date(rows[0].seen).getTime() : null, visible: rows[0].visible };
+    },
+
+    // The app is on screen (true) or not (false). Coming back restarts the notification window.
+    async setVisible(userId, visible) {
+      await q('UPDATE users SET visible = $2::boolean, notified_at = CASE WHEN $2::boolean THEN NULL ELSE notified_at END WHERE id = $1', [userId, Boolean(visible)]);
+    },
+
+    async clearNotified(userId) {
+      await q('UPDATE users SET notified_at = NULL WHERE id = $1', [userId]);
+    },
+
+    // Atomically claim the right to send ONE notification per window. true = you may send it now.
+    async claimNotify(userId, windowMs) {
+      const r = await q(
+        `UPDATE users SET notified_at = now()
+         WHERE id = $1 AND (notified_at IS NULL OR notified_at < now() - make_interval(secs => $2)) RETURNING 1`,
+        [userId, windowMs / 1000]
+      );
+      return r.rowCount > 0;
+    },
+
+    // True when this user has not sent a heartbeat for `graceMs`.
+    async isStale(userId, graceMs) {
+      const { rows } = await q('SELECT (online_at IS NULL OR online_at < now() - make_interval(secs => $2)) AS stale FROM users WHERE id = $1', [
+        userId,
+        graceMs / 1000,
+      ]);
+      return rows[0] ? Boolean(rows[0].stale) : true;
     },
 
     // When this user was last connected (ms since epoch), or null.
@@ -186,6 +267,11 @@ function createDb(pool = createPool()) {
         .map((r) => r.payload);
     },
 
+    async pendingIds(toId) {
+      const { rows } = await q('SELECT id FROM pending_messages WHERE to_id = $1 ORDER BY created_at LIMIT 100', [toId]);
+      return rows.map((r) => r.id);
+    },
+
     // How many videos from `fromId` are still waiting (unseen) for `toId` in cloud storage.
     async countPendingVideos(fromId, toId) {
       const { rows } = await q('SELECT payload FROM pending_messages WHERE from_id = $1 AND to_id = $2', [fromId, toId]);
@@ -212,25 +298,51 @@ function createDb(pool = createPool()) {
       return r.rows.map((x) => x.payload);
     },
 
-    // ---- call logs ----
-    async createCall(callerId, calleeId) {
+    // ---- call logs (also the live call state: a call is active while ended_at IS NULL) ----
+    async createCall(callerId, calleeId, video = true) {
       const { rows } = await q(
-        "INSERT INTO call_logs (caller_id, callee_id, status) VALUES ($1, $2, 'ringing') RETURNING id",
-        [callerId, calleeId]
+        "INSERT INTO call_logs (caller_id, callee_id, status, video) VALUES ($1, $2, 'ringing', $3) RETURNING id",
+        [callerId, calleeId, video !== false]
       );
-      return rows[0].id;
+      return String(rows[0].id);
+    },
+
+    // The unfinished call this user takes part in, or null.
+    async getActiveCall(userId) {
+      const { rows } = await q(
+        `SELECT id, caller_id, callee_id, video, status, started_at, answered_at FROM call_logs
+         WHERE ended_at IS NULL AND status IN ('ringing', 'answered') AND (caller_id = $1 OR callee_id = $1)
+         ORDER BY id DESC LIMIT 1`,
+        [userId]
+      );
+      const r = rows[0];
+      if (!r) return null;
+      return {
+        id: String(r.id),
+        caller: r.caller_id,
+        callee: r.callee_id,
+        video: r.video,
+        status: r.status,
+        startedAt: new Date(r.started_at).getTime(),
+        answeredAt: r.answered_at ? new Date(r.answered_at).getTime() : null,
+      };
     },
 
     async markCallAnswered(id) {
-      await q("UPDATE call_logs SET status = 'answered', answered_at = $2 WHERE id = $1", [id, new Date()]);
+      const r = await q("UPDATE call_logs SET status = 'answered', answered_at = now() WHERE id = $1 AND status = 'ringing' AND ended_at IS NULL RETURNING 1", [id]);
+      return r.rowCount > 0;
     },
 
-    // status: 'missed' | 'declined' | 'completed'
-    async finishCall(id, status, durationS = 0) {
-      await q(
-        'UPDATE call_logs SET status = $2, ended_at = $3, duration_s = $4 WHERE id = $1',
-        [id, status, new Date(), Math.max(0, Math.round(durationS))]
+    // status: 'missed' | 'declined' | 'completed'. Returns the talk time in seconds, or null if the call was already finished
+    // (so a call is ended exactly once, even when two requests race).
+    async finishCall(id, status) {
+      const r = await q(
+        `UPDATE call_logs SET status = $2, ended_at = now(),
+           duration_s = CASE WHEN answered_at IS NULL THEN 0 ELSE GREATEST(0, round(extract(epoch FROM (now() - answered_at)))::int) END
+         WHERE id = $1 AND ended_at IS NULL RETURNING duration_s`,
+        [id, status]
       );
+      return r.rowCount ? r.rows[0].duration_s : null;
     },
 
     async recentCalls(userId, limit = 20) {
@@ -265,4 +377,4 @@ function createDb(pool = createPool()) {
   };
 }
 
-module.exports = { createDb, SCHEMA };
+module.exports = { createDb, SCHEMA, ONLINE_WINDOW_S };

@@ -15,8 +15,13 @@ model User {
   secretHash String   @map("secret_hash")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   lastSeen   DateTime @default(now()) @map("last_seen") @db.Timestamptz(6)
+  onlineAt   DateTime? @map("online_at") @db.Timestamptz(6) // last heartbeat
+  offline    Boolean  @default(false)
+  visible    Boolean  @default(true)
+  notifiedAt DateTime? @map("notified_at") @db.Timestamptz(6)
+  sessionId  String?  @map("session_id")
 
-  pairing           Pairing?           @relation("owner")
+  pairing          Pairing?           @relation("owner")
   partnerOf         Pairing?           @relation("partner")
   pushSubscriptions PushSubscription[]
 
@@ -54,7 +59,10 @@ model CallLog {
   answeredAt DateTime? @map("answered_at") @db.Timestamptz(6)
   endedAt    DateTime? @map("ended_at") @db.Timestamptz(6)
   durationS  Int       @default(0) @map("duration_s")
+  video      Boolean   @default(true)
 
+  @@index([callerId], map: "call_logs_caller_idx")
+  @@index([calleeId], map: "call_logs_callee_idx")
   @@map("call_logs")
 }
 

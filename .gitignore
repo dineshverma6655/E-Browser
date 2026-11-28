@@ -6,3 +6,4 @@ node_modules/
 *.log
 .env
 tsconfig.tsbuildinfo
+env.txt
