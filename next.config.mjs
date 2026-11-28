@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  distDir: process.env.NEXT_DIST_DIR || '.next', // lets a test build live next to a running dev server
   reactStrictMode: false, // Prevents duplicate peer connection triggers in dev
   experimental: {
     // Used by the API routes (server/*.js): keep them as plain Node modules instead of bundling them.

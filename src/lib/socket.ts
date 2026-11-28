@@ -15,7 +15,7 @@ const PUSHER_KEY = process.env.NEXT_PUBLIC_PUSHER_KEY || '';
 const PUSHER_CLUSTER = process.env.NEXT_PUBLIC_PUSHER_CLUSTER || '';
 const HEARTBEAT_MS = PUSHER_KEY ? 20_000 : 5_000;
 const CALL_HEARTBEAT_MS = 4_000; // ringing / in a call: notice a missed or ended call quickly
-const NO_RETRY = new Set(['start-call', 'pair-with-partner']); // not safe to repeat blindly
+const NO_RETRY = new Set(['start-call', 'pair-with-partner', 'heartbeat']); // not safe to repeat blindly
 const CALL_START = ['incoming-call', 'call-accepted'];
 const CALL_END = ['call-ended', 'call-missed', 'call-declined'];
 
@@ -35,6 +35,9 @@ class RtSocket {
   private hbTimer: ReturnType<typeof setTimeout> | null = null;
   private hbFailures = 0;
   private callMode = false;
+  private beating = false; // a heartbeat request is in flight
+  private stamp = ''; // fingerprint of the server state this device last saw (long polling)
+  private lastBeatOk = true;
   private callGuard = 0; // until then, "no call on the server" may just mean the start-call request is still in flight
   private partnerId: string | null = null;
   private partnerOnline: boolean | null = null;
@@ -161,14 +164,16 @@ class RtSocket {
     if (!this.creds) return null;
     const body = this.body(event, payload);
     const tries = NO_RETRY.has(event) ? 1 : 3;
+    const long = event === 'heartbeat' && Boolean(payload && payload.wait);
     for (let i = 0; i < tries; i++) {
       try {
         const r = await fetch('/api/rt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body,
-          keepalive: body.length < 60_000,
+          keepalive: !long && body.length < 60_000,
           cache: 'no-store',
+          signal: long ? AbortSignal.timeout(20_000) : undefined, // a request frozen by the phone must not block the loop
         });
         if (r.status >= 500) throw new Error(`HTTP ${r.status}`);
         return (await r.json()) as Reply;
@@ -276,20 +281,31 @@ class RtSocket {
   private scheduleHeartbeat() {
     this.stopHeartbeat();
     if (!this.registered) return;
-    this.hbTimer = setTimeout(async () => {
+    // With Pusher: a heartbeat every 20 s (4 s during a call). Without it: long polling, the next request starts right away.
+    const delay = PUSHER_KEY ? (this.callMode ? CALL_HEARTBEAT_MS : HEARTBEAT_MS) : this.lastBeatOk ? 0 : 2500;
+    this.hbTimer = setTimeout(() => this.runBeat(), delay);
+  }
+
+  private async runBeat() {
+    if (this.beating || !this.registered) return;
+    this.beating = true;
+    try {
       await this.beat();
-      this.scheduleHeartbeat();
-    }, this.callMode ? CALL_HEARTBEAT_MS : HEARTBEAT_MS);
+    } finally {
+      this.beating = false;
+    }
+    this.scheduleHeartbeat();
   }
 
   private kick() {
     if (!this.registered) return;
     this.stopHeartbeat();
-    this.beat().then(() => this.scheduleHeartbeat());
+    this.runBeat();
   }
 
   private async beat() {
-    const res = await this.request('heartbeat', {});
+    const res = await this.request('heartbeat', PUSHER_KEY ? {} : { wait: true, stamp: this.stamp });
+    this.lastBeatOk = Boolean(res);
     if (!res) {
       // Without Pusher this is also how a lost connection is noticed.
       if (!PUSHER_KEY && ++this.hbFailures >= 3) this.setConnected(false);
@@ -301,7 +317,10 @@ class RtSocket {
       return;
     }
     for (const [name, data] of res.events || []) this.dispatch(name, data);
-    if (res.ack) this.applyState(res.ack);
+    if (res.ack) {
+      if (typeof res.ack.stamp === 'string') this.stamp = res.ack.stamp;
+      this.applyState(res.ack);
+    }
   }
 
   // Compare the server's truth with what this device knows, and raise whatever was missed.

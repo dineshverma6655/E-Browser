@@ -24,6 +24,10 @@ const MAX_MSG_CHARS = 4 * 1024 * 1024; // base64 photo upper bound
 const ID_RE = /^P2P-[A-Z0-9]{6,12}$/;
 // Vercel limits a response to 4.5 MB: redelivery is split into batches below this size.
 const BATCH_BYTES = 3 * 1024 * 1024;
+// Long polling (used when there is no Pusher): a heartbeat may wait this long for something to change before answering.
+const WAIT_MS = 6_000;
+const WAIT_STEP_MS = 1_000;
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 // A reply quotes another message. `mine` is relative to the sender (the receiver flips it).
 function cleanReply(r) {
@@ -151,12 +155,15 @@ function createRt({ db, push, media = { enabled: false }, publisher }) {
   async function stateFor(ctx, me) {
     const partnerId = await db.getPartner(me);
     const [pres, call, pending] = await Promise.all([partnerId ? db.getPresence(partnerId) : null, activeCall(ctx, me), db.pendingIds(me)]);
-    return {
+    const st = {
       partnerId,
       partner: pres ? { online: pres.online, lastSeen: pres.lastSeen } : null,
       call: call ? { id: call.id, caller: call.caller, callee: call.callee, status: call.status, video: call.video } : null,
       pending,
     };
+    // Fingerprint of everything above: a device that already knows it can ask to be told only when it changes.
+    st.stamp = JSON.stringify([st.partnerId, st.partner && st.partner.online, st.call && [st.call.id, st.call.status], pending]);
+    return st;
   }
 
   // ---- event handlers: (ctx, me, payload) -> optional ack value ----
@@ -195,11 +202,25 @@ function createRt({ db, push, media = { enabled: false }, publisher }) {
     },
 
     // Called every few seconds by the open app. Keeps the user "online" and lets a device catch up on anything it missed.
-    async heartbeat(ctx, me) {
+    async heartbeat(ctx, me, p = {}) {
       const wasOnline = await db.heartbeat(me);
-      const st = await stateFor(ctx, me);
+      let st = await stateFor(ctx, me);
       // Back after a pause (phone woke up): the partner should see "online" again right away.
       if (!wasOnline && st.partnerId) send(ctx, st.partnerId, 'partner-status', { partnerId: me, online: true });
+
+      // Long poll: hold the request until something changes (a message, a call, the partner coming or going) or the time
+      // is up. This gives near-instant delivery without any extra realtime service.
+      if (p.wait && typeof p.stamp === 'string' && p.stamp === st.stamp) {
+        const until = Date.now() + WAIT_MS;
+        while (Date.now() < until && ctx.out.length === 0) {
+          await sleep(WAIT_STEP_MS);
+          const next = await stateFor(ctx, me);
+          if (next.stamp !== st.stamp) {
+            st = next;
+            break;
+          }
+        }
+      }
       return st;
     },
 
